@@ -1,0 +1,35 @@
+{
+  "name": "reachat",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ReaChat — self-hosted, end-to-end encrypted messaging (Electron + React + Node.js)",
+  "workspaces": [
+    "server",
+    "desktop"
+  ],
+  "scripts": {
+    "install:all": "npm install",
+    "dev:server": "npm --workspace server run dev",
+    "dev:desktop": "npm --workspace desktop run dev",
+    "seed": "npm --workspace server run seed",
+    "test": "npm test -w server && npm test -w desktop",
+    "release": "node scripts/release.mjs",
+    "smoke-ui": "node scripts/smoke-ui.mjs"
+  },
+  "license": "Apache-2.0",
+  "author": "aksoft.vn",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AKSOFT-VN/reachat.git"
+  },
+  "homepage": "https://github.com/AKSOFT-VN/reachat#readme",
+  "bugs": {
+    "url": "https://github.com/AKSOFT-VN/reachat/issues"
+  },
+  "overrides": {
+    "node-turn": {
+      "js-yaml": "3.15.2",
+      "log4js": "6.9.1"
+    }
+  }
+}

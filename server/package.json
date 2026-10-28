@@ -1,0 +1,43 @@
+{
+  "name": "reachat-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "seed": "node src/seed.js",
+    "gencert": "node scripts/gencert.js",
+    "start:tls": "node -e \"process.env.TLS='1';import('./src/index.js')\"",
+    "test": "node test/run-all.mjs",
+    "make-admin": "node scripts/make-admin.js",
+    "backup-db": "node scripts/backup-db.js",
+    "backup-files": "node scripts/backup-files.js",
+    "backup": "node scripts/backup-db.js && node scripts/backup-files.js",
+    "fetch-stt-model": "node scripts/fetch-stt-model.js"
+  },
+  "dependencies": {
+    "bcryptjs": "2.4.3",
+    "better-sqlite3": "11.3.0",
+    "cors": "2.8.5",
+    "express": "4.22.3",
+    "jsonwebtoken": "9.0.2",
+    "nanoid": "5.1.16",
+    "node-turn": "^0.0.6",
+    "nodemailer": "10.1.5",
+    "selfsigned": "^2.4.1",
+    "web-push": "^3.6.7",
+    "ws": "8.22.0"
+  },
+  "license": "Apache-2.0",
+  "author": "aksoft.vn",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AKSOFT-VN/reachat.git"
+  },
+  "homepage": "https://github.com/AKSOFT-VN/reachat#readme",
+  "bugs": {
+    "url": "https://github.com/AKSOFT-VN/reachat/issues"
+  }
+}
