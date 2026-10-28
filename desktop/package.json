@@ -71,7 +71,7 @@
     "react-dom": "18.3.1",
     "tweetnacl": "1.0.3",
     "tweetnacl-util": "0.15.1",
-    "vite": "5.4.21",
+    "vite": "8.3.5",
     "wait-on": "8.0.1",
     "yjs": "^13.6.20"
   },
