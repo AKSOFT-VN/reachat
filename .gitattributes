@@ -1,0 +1,5 @@
+# Giữ xuống dòng kiểu LF trong kho (script .sh chạy trên Linux sẽ hỏng nếu bị đổi sang CRLF)
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.wasm binary

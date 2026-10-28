@@ -1,0 +1,24 @@
+name: Feature request / Đề xuất tính năng
+description: Suggest an idea or improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Vấn đề
+      description: What are you trying to do, and what makes it hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution / Giải pháp đề xuất
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Privacy / encryption impact
+      description: Would the server need to see anything it cannot see today? (see docs/SECURITY-MODEL.md)
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

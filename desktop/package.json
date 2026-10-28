@@ -1,0 +1,87 @@
+{
+  "name": "reachat-desktop",
+  "version": "0.9.0",
+  "private": true,
+  "description": "ReaChat — ứng dụng nhắn tin desktop E2E độc lập",
+  "author": "aksoft.vn",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k -n VITE,ELECTRON -c cyan,magenta \"npm:dev:vite\" \"npm:dev:electron\"",
+    "dev:vite": "vite",
+    "dev:electron": "wait-on tcp:5173 && cross-env ELECTRON_START_URL=http://localhost:5173 electron .",
+    "build": "vite build",
+    "pack:dir": "vite build && electron-builder --dir",
+    "dist": "vite build && electron-builder",
+    "release": "vite build && electron-builder --win nsis && node scripts/publish-update.cjs",
+    "test": "node test/unit.mjs"
+  },
+  "build": {
+    "appId": "vn.aksoft.reachat",
+    "productName": "ReaChat",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/sql.js/dist/*.wasm"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "artifactName": "ReaChat-Setup-${version}.${ext}",
+      "guid": "3bd6ea41-ad20-592c-a60d-c555bda5917d"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "http://localhost:4000/updates"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "6.8.10",
+    "sql.js": "1.12.0"
+  },
+  "devDependencies": {
+    "@huggingface/transformers": "3.7.6",
+    "@vitejs/plugin-react": "4.7.0",
+    "concurrently": "9.0.1",
+    "cross-env": "7.0.3",
+    "electron": "42.11.18",
+    "electron-builder": "26.17.0",
+    "fix-webm-duration": "^1.0.6",
+    "jsqr": "^1.4.0",
+    "qrcode": "^1.5.4",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tweetnacl": "1.0.3",
+    "tweetnacl-util": "0.15.1",
+    "vite": "5.4.21",
+    "wait-on": "8.0.1",
+    "yjs": "^13.6.20"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AKSOFT-VN/reachat.git"
+  },
+  "homepage": "https://github.com/AKSOFT-VN/reachat#readme",
+  "bugs": {
+    "url": "https://github.com/AKSOFT-VN/reachat/issues"
+  }
+}

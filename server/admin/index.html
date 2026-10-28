@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ReaChat Admin</title>
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<div id="login" class="center hidden">
+  <form class="card login" id="loginForm">
+    <h1>ReaChat <span>Quản trị</span></h1>
+    <input id="lu" placeholder="username" autocomplete="username" required>
+    <input id="lp" type="password" placeholder="mật khẩu" autocomplete="current-password" required>
+    <input id="lo" class="hidden" inputmode="numeric" placeholder="Mã xác thực 2 bước">
+    <div id="lerr" class="err"></div>
+    <button class="primary">Đăng nhập</button>
+    <p class="muted small">Chỉ tài khoản có quyền quản trị (cấp bằng <code>npm run make-admin -- &lt;username&gt;</code> trên máy chủ).</p>
+  </form>
+</div>
+
+<div id="app" class="hidden">
+  <header class="top">
+    <b>ReaChat <span>Quản trị</span></b>
+    <nav>
+      <button data-tab="dash" class="on">Tổng quan</button>
+      <button data-tab="reports">Báo cáo <span id="openBadge" class="badge hidden"></span></button>
+      <button data-tab="users">Người dùng</button>
+      <button data-tab="gifs">Kho GIF / Sticker</button>
+      <button data-tab="mod">Kiểm duyệt</button>
+      <button data-tab="audit">Nhật ký</button>
+    </nav>
+    <span class="me"><span id="meName"></span> · <a href="#" id="logout">Đăng xuất</a></span>
+  </header>
+
+  <main>
+    <section id="tab-dash">
+      <div class="tiles" id="tiles"></div>
+      <div class="card">
+        <h3>Tin nhắn 14 ngày qua</h3>
+        <div id="chart" class="chart"></div>
+        <p class="muted small">Chỉ đếm số lượng — nội dung tin mã hóa đầu-cuối, máy chủ không đọc được.</p>
+      </div>
+    </section>
+
+    <section id="tab-reports" class="hidden">
+      <div class="toolbar">
+        <select id="rstatus"><option value="open">Đang chờ</option><option value="resolved">Đã xử lý</option><option value="dismissed">Đã bỏ qua</option><option value="all">Tất cả</option></select>
+        <button id="rreload" class="ghost">Tải lại</button>
+      </div>
+      <div id="reports"></div>
+    </section>
+
+    <section id="tab-users" class="hidden">
+      <div class="toolbar"><input id="uq" placeholder="Tìm username / tên…"><button id="ureload" class="ghost">Tìm</button></div>
+      <table class="tbl"><thead><tr><th>Người dùng</th><th>Tạo lúc</th><th>Trạng thái</th><th>Bị báo cáo</th><th></th></tr></thead><tbody id="users"></tbody></table>
+    </section>
+    <section id="tab-gifs" class="hidden">
+      <div class="card">
+        <h3>Thêm vào kho</h3>
+        <div class="toolbar"><select id="gkind"><option value="gif">GIF (tìm theo từ khóa)</option><option value="sticker">Sticker (theo gói)</option></select>
+          <input id="gpack" class="hidden" placeholder="Tên gói sticker (vd. Mèo béo)"></div>
+        <p class="muted small">Người dùng tìm GIF theo <b>tên</b> và <b>từ khóa</b> (không cần gõ dấu). Nhận GIF / WebP / PNG động, tối đa 10 MB mỗi tệp.
+          Chọn nhiều tệp một lúc được — tên tệp dùng làm tên GIF. Chỉ đưa vào GIF bạn có quyền sử dụng.</p>
+        <div class="toolbar">
+          <input id="gtags" placeholder="Từ khóa chung cho các tệp sắp tải lên (vd. chúc mừng, vui, haha)">
+          <label class="primary file-btn">Chọn tệp GIF…<input id="gfiles" type="file" accept="image/gif,image/webp,image/png" multiple hidden></label>
+        </div>
+        <div id="gprog" class="muted small"></div>
+      </div>
+      <div class="toolbar"><input id="gq" placeholder="Tìm trong kho…"><span id="gcount" class="muted small"></span></div>
+      <div id="gifs" class="gif-admin"></div>
+    </section>
+    <section id="tab-mod" class="hidden">
+      <div class="card">
+        <h3>Từ ngữ cấm</h3>
+        <p class="muted small">Mỗi dòng một từ / cụm từ. So khớp nguyên từ, không phân biệt dấu và hoa thường. Áp dụng cho nội dung máy chủ đọc được:
+          bài đăng + tên/mô tả kênh công khai, tên nhóm, username, tên hiển thị, giới thiệu, trạng thái, tin tự động trả lời.
+          Tin nhắn mã hóa đầu-cuối máy chủ không đọc được — người dùng dùng nút Báo cáo.</p>
+        <textarea id="mwords" rows="8" placeholder="vd.&#10;lừa đảo&#10;cá độ"></textarea>
+        <h3>Tên miền bị chặn</h3>
+        <p class="muted small">Mỗi dòng một tên miền (chặn cả tên miền con). Bài đăng kênh công khai chứa liên kết tới các trang này sẽ bị từ chối.</p>
+        <textarea id="mdomains" rows="6" placeholder="vd.&#10;trang-lua-dao.com&#10;bit.ly"></textarea>
+        <div class="toolbar"><button id="msave" class="primary">Lưu</button><span id="mmsg" class="muted small"></span></div>
+      </div>
+    </section>
+    <section id="tab-audit" class="hidden">
+      <div class="toolbar"><button id="areload" class="ghost">Tải lại</button></div>
+      <table class="tbl"><thead><tr><th>Lúc</th><th>Quản trị viên</th><th>Thao tác</th><th>Đối tượng</th><th>Chi tiết</th></tr></thead><tbody id="audit"></tbody></table>
+    </section>
+  </main>
+</div>
+<div id="toast" class="toast hidden"></div>
+<script src="admin.js"></script>
+</body>
+</html>

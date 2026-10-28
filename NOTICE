@@ -1,0 +1,17 @@
+ReaChat
+Copyright 2026 aksoft.vn
+
+This product includes software developed by aksoft.vn.
+
+This product bundles or depends on third-party open-source software, including:
+  - React, Electron, Vite, Express, ws (MIT)
+  - better-sqlite3, sql.js (MIT)
+  - TweetNaCl.js (Unlicense / public domain)
+  - Yjs (MIT)
+  - Transformers.js and ONNX Runtime Web (Apache-2.0 / MIT) — on-device speech recognition
+  - Whisper speech-recognition model (OpenAI), ONNX conversion "Xenova/whisper-base" (Apache-2.0) —
+    downloaded to the server at deploy time, not stored in this repository
+  - node-turn (MIT), web-push (MPL-2.0), nodemailer (MIT-0)
+
+Each dependency is distributed under its own license; see the package metadata in node_modules
+(or `npx license-checker`) for the complete list.

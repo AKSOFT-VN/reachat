@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/AKSOFT-VN/reachat/security/advisories/new
+    about: Please report security issues privately, never in public issues.
+  - name: 📖 Self-hosting guide
+    url: https://github.com/AKSOFT-VN/reachat/blob/main/docs/SELF-HOSTING.md
+    about: Installation and configuration questions are often answered here.

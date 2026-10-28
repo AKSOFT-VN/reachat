@@ -1,0 +1,41 @@
+node_modules/
+dist/
+dist-electron/
+*.db
+*.db-journal
+.env
+.DS_Store
+server/vapid.json
+server/certs/
+
+# ---- Dữ liệu người dùng / máy chủ chạy thật (KHÔNG đưa vào Git) ----
+*.db-wal
+*.db-shm
+*.db.bak*
+server/data/
+server/uploads/
+server/gifs/
+server/models/
+server/srv.out
+server/srv.err
+*.log
+
+# ---- Bản build / bộ cài (tạo lại được bằng npm run release) ----
+desktop/release/
+desktop/release-*/
+server/updates/*.exe
+server/updates/*.blockmap
+server/updates/latest.yml
+
+# ---- Khóa bí mật ----
+*.pem
+*.pfx
+*.p12
+.env.*
+
+# Cấu hình triển khai riêng (máy chủ của bạn)
+deploy/deploy.env
+
+# Khóa ký phiên tự sinh
+.jwt-secret
+!.env.example

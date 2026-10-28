@@ -1,0 +1,54 @@
+name: Bug report / Báo lỗi
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **Security vulnerabilities must NOT be reported here** — see SECURITY.md.
+        Có thể viết bằng tiếng Việt.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened? / Chuyện gì xảy ra?
+      description: Include the exact error message if any.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / Các bước tái hiện
+      placeholder: |
+        1. Open …
+        2. Click …
+        3. See …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour / Mong đợi
+  - type: input
+    id: version
+    attributes:
+      label: ReaChat version (app + server)
+      placeholder: "0.9.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: Client
+      options: [Windows desktop app, Web app (browser), PWA on phone, Server / admin dashboard]
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS, browser, how the server is deployed (Docker, reverse proxy…)
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Server logs (`docker logs reachat`), errors from the admin dashboard. Remove personal data.
