@@ -23,7 +23,7 @@
     "cors": "2.8.5",
     "express": "4.22.3",
     "jsonwebtoken": "9.0.2",
-    "nanoid": "5.1.16",
+    "nanoid": "6.0.2",
     "node-turn": "^0.0.6",
     "nodemailer": "10.1.5",
     "selfsigned": "^2.4.1",
