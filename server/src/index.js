@@ -17,6 +17,7 @@ import { startContact, confirmContact, removeContact as removeContactInfo, conta
 import { channels as notifyChannels } from './notify.js';
 import { newCaptcha, checkCaptcha, captchaError, captchaEnabled, checkRegisterIp, recordRegisterIp } from './captcha.js';
 import * as google from './google.js';
+import * as qrlogin from './qrlogin.js';
 import { searchUsers, getPrivacy, setPrivacy, setPrivacy2 } from './search.js';
 import { profileOf, updateProfileExtra, birthdaysToday } from './profile.js';
 import { linkPreview } from './linkpreview.js';
@@ -218,6 +219,21 @@ app.post('/api/me/google/unlink', requireAuth, wrap(async (req, res) => {
   await reauth(req, { allowFresh: false, otp: false });   // gỡ Google không mở thêm quyền gì -> mật khẩu là đủ
   res.json(google.unlink(req.user));
 }));
+
+// ---- Đăng nhập máy mới bằng QR (xem qrlogin.js) ----
+app.post('/api/qrlogin/begin', wrap(async (req, res) => {
+  const ip = clientIp(req), now = Date.now();
+  const list = (capHits.get('q:' + ip) || []).filter((t) => now - t < 600_000);
+  if (list.length >= 30) throw httpError(429, 'Thử lại sau ít phút');
+  capHits.set('q:' + ip, [...list, now]);
+  res.json(qrlogin.begin(req.body || {}, { device: deviceLabel(req.body?.device, req.headers['user-agent']), ip }));
+}));
+app.post('/api/qrlogin/poll', wrap(async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(qrlogin.poll(req.body || {}, { getUserById, issueToken, meta: { device: deviceLabel(req.body?.device, req.headers['user-agent']), ip: clientIp(req) } }));
+}));
+app.post('/api/qrlogin/info', requireAuth, wrap(async (req, res) => res.json(qrlogin.info(req.body?.sid))));
+app.post('/api/qrlogin/approve', requireAuth, wrap(async (req, res) => res.json(qrlogin.approve(req.body?.sid, req.body?.sealed, req.user))));
 
 app.post('/api/login', wrap(async (req, res) => {
   res.json(await login(req.body, clientIp(req), { device: deviceLabel(req.body?.device, req.headers['user-agent']) }));

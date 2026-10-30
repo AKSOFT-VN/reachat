@@ -104,6 +104,36 @@ export async function openRecoveryBackup(username, code, backup) {
   } catch { return false; }
 }
 
+// ---- Chuyển khóa danh tính sang máy mới qua QR: bó khóa niêm phong cho khóa tạm (X25519) của máy mới ----
+// Máy mới tạo cặp khóa tạm, đưa khóa công khai vào QR; máy cũ niêm phong { cur, hist } bằng một cặp khóa tạm khác.
+export const newEphemeral = () => { const k = nacl.box.keyPair(); return { publicKey: encodeBase64(k.publicKey), secretKey: k.secretKey }; };
+export function sealKeyBundleFor(username, ephemeralPubB64) {
+  getOrCreateKeypair(username);
+  const payload = JSON.stringify({ u: username, cur: JSON.parse(localStorage.getItem(KEY_STORE + username)), hist: loadHist(username) });
+  const mine = nacl.box.keyPair(), nonce = nacl.randomBytes(nacl.box.nonceLength);
+  const box = nacl.box(decodeUTF8(payload), nonce, decodeBase64(ephemeralPubB64), mine.secretKey);
+  return { epk: encodeBase64(mine.publicKey), nonce: encodeBase64(nonce), box: encodeBase64(box) };
+}
+// Mở bó khóa bằng khóa tạm bí mật rồi CÀI như mở bản sao lưu. Trả về true nếu đúng người dùng và cài được.
+export function openKeyBundle(username, sealed, ephemeralSecret) {
+  try {
+    const opened = nacl.box.open(decodeBase64(sealed.box), decodeBase64(sealed.nonce), decodeBase64(sealed.epk), ephemeralSecret);
+    if (!opened) return false;
+    const obj = JSON.parse(encodeUTF8(opened));
+    if (obj.u !== username || !validPublicKey(obj.cur?.publicKey)) return false;
+    return installKeys(username, obj);
+  } catch { return false; }
+}
+function installKeys(username, obj) {
+  const cur = obj.cur || obj;
+  if (!validPublicKey(cur.publicKey)) return false;
+  const local = localStorage.getItem(KEY_STORE + username);
+  if (local) { const lk = JSON.parse(local); if (lk.publicKey !== cur.publicKey) addHist(username, lk); }
+  for (const h of obj.hist || []) if (h.publicKey !== cur.publicKey) addHist(username, h);
+  localStorage.setItem(KEY_STORE + username, JSON.stringify(cur));
+  return true;
+}
+
 // Bản sao lưu v2 = { cur: cặp khóa hiện tại, hist: [các cặp khóa cũ] }.
 export async function sealKeyBackup(username, password) {
   getOrCreateKeypair(username);
@@ -118,14 +148,7 @@ export async function openKeyBackup(username, password, backup) {
   try {
     const opened = nacl.secretbox.open(decodeBase64(backup.box), decodeBase64(backup.nonce), await wrapKeyFromPassword(username, password));
     if (!opened) return false;
-    const obj = JSON.parse(encodeUTF8(opened));
-    const cur = obj.cur || obj;                       // v1 = chỉ có cặp khóa
-    if (!validPublicKey(cur.publicKey)) return false;
-    const local = localStorage.getItem(KEY_STORE + username);
-    if (local) { const lk = JSON.parse(local); if (lk.publicKey !== cur.publicKey) addHist(username, lk); }
-    for (const h of obj.hist || []) if (h.publicKey !== cur.publicKey) addHist(username, h);
-    localStorage.setItem(KEY_STORE + username, JSON.stringify(cur));
-    return true;
+    return installKeys(username, JSON.parse(encodeUTF8(opened)));   // v1 = chỉ có cặp khóa
   } catch { return false; }
 }
 

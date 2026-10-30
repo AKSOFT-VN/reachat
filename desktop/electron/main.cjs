@@ -154,6 +154,13 @@ function setupUpdater() {
     updateTimer = setInterval(check, 4 * 3600 * 1000);
   } catch (e) { console.warn('updater:', e.message); }
 }
+// Khởi động cùng hệ điều hành: chỉ bản đã đóng gói (bản dev sẽ đăng ký nhầm electron.exe). Mở ẩn -> chạy nền ở khay.
+const autostartState = () => ({ supported: app.isPackaged, on: app.isPackaged && app.getLoginItemSettings().openAtLogin });
+ipcMain.handle('autostart:get', () => autostartState());
+ipcMain.handle('autostart:set', (_e, on) => {
+  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: !!on, args: ['--hidden'] });
+  return autostartState();
+});
 ipcMain.handle('update:check', () => (updater ? updater.checkForUpdates().then(() => true).catch((e) => { sendUpdate({ state: 'error', error: e.message }); return false; }) : (sendUpdate({ state: 'dev' }), false)));
 // Cài im lặng (/S) rồi mở lại app — bộ cài assisted không hiện wizard khi cập nhật.
 ipcMain.handle('update:install', () => { if (updater) setImmediate(() => updater.quitAndInstall(true, true)); return !!updater; });

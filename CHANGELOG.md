@@ -5,6 +5,20 @@ and the project uses [Semantic Versioning](https://semver.org/) (pre-1.0: minor 
 
 ## [Unreleased]
 
+### Added
+- **Sign in with a QR code**: a new device shows a QR code, a signed-in device approves it and hands over the identity keys sealed
+  to a one-time ephemeral key (`/api/qrlogin/*`, sessions expire after 2 minutes and can be used once).
+- **Hidden chats** protected by a PIN, and **nicknames** for contacts; both sync across devices.
+- Multi-select messages (copy, forward, delete for me, recall), message **edit history**, jump to the quoted message,
+  `**bold**` / `_italic_` / `~strike~` / `` `code` `` formatting, paste images with Ctrl+V, "mark all as read".
+- Keyboard shortcuts (Ctrl+K search, Alt+↑/↓ switch chats, Esc closes dialogs, Ctrl+/ help), message font size, start with Windows.
+
+### Fixed
+- Group keys now sync between a user's devices, so a second device can read group messages sent before it joined.
+- Recalling a message could crash the chat view.
+- A message from someone new no longer shows an empty "@…" conversation until reload.
+- Narrow desktop windows keep the chat pane visible (single-column layout only below 600 px).
+
 ### Changed
 - **New visual design**: navigation rail (chats, contacts, channels, meetings, LAN; settings and account at the bottom), green
   colour palette, new logo and app icon, larger rounded bubbles and list rows, single-frame composer, redesigned sign-in screen;

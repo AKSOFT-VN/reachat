@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback, useContext, createContext } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useContext, createContext, Fragment } from 'react';
 import * as api from './api.js';
 import * as crypto from './crypto.js';
 import * as ratchet from './ratchet.js';
@@ -14,7 +14,7 @@ import { summarize } from './summarize.js';
 import * as Y from 'yjs';
 import jsQR from 'jsqr';
 import { playMessage, startRing, getSoundPrefs, setSoundPrefs } from './sound.js';
-import { mergeDocs, emptyDoc, docHash } from './syncdoc.js';
+import { mergeDocs, mergeGroupKey, emptyDoc, docHash } from './syncdoc.js';
 import { transcribe } from './stt.js';
 
 // Cung cấp hàm lấy objectURL cho media (tự giải mã nếu file đã mã hóa).
@@ -191,6 +191,7 @@ function AuthScreen({ onLogin }) {
   const [terms, setTerms] = useState(false);
   const [captcha, setCaptcha] = useState(null), [capKey, setCapKey] = useState(0), [needCap, setNeedCap] = useState(false);
   const [gOn, setGOn] = useState(false), [gflow, setGflow] = useState(null);
+  const [qrFlow, setQrFlow] = useState(false);
   useEffect(() => { api.googleConfig().then((c) => setGOn(!!c.enabled)); }, []);
   useEffect(() => { if (mode === 'recover') api.forgotChannels().then(setChan); }, [mode]);
   const showCap = mode === 'register' || (mode === 'login' && needCap) || (mode === 'recover' && rmode !== 'code' && !sent);
@@ -252,6 +253,7 @@ function AuthScreen({ onLogin }) {
       setErr(e instanceof TypeError ? 'Không kết nối được máy chủ ' + window.reachat.serverUrl + (window.reachat.transport?.secure ? ' — nếu máy chủ dùng chứng chỉ tự ký, mở “Máy chủ” bên dưới để kiểm tra và ghim vân tay.' : '.') : e.message);
     } finally { setBusy(false); }
   };
+  if (qrFlow) return <div className="auth"><QrLoginFlow onLogin={onLogin} onCancel={(m) => { setQrFlow(false); setErr(m || ''); }} /></div>;
   if (gflow) return <div className="auth"><GoogleFlow nonce={gflow.nonce} onLogin={onLogin} onCancel={(m) => { setGflow(null); setErr(m || ''); }} /></div>;
   const startGoogle = async () => {
     setErr('');
@@ -294,6 +296,7 @@ function AuthScreen({ onLogin }) {
         {mode !== 'recover' && <>
           <div className="or-line"><span>hoặc</span></div>
           <button type="button" className="google-btn" onClick={startGoogle}><GoogleG /> <span>{mode === 'register' ? 'Đăng ký bằng Google (Gmail)' : 'Đăng nhập bằng Google (Gmail)'}</span></button>
+          {mode === 'login' && <button type="button" className="ghost qr-login-btn" onClick={() => { setErr(''); setQrFlow(true); }}>📱 Đăng nhập bằng mã QR</button>}
         </>}
         {mode === 'login' && <button type="button" className="link small" onClick={() => { setMode('recover'); setErr(''); setNeed2fa(false); }}>Quên mật khẩu?</button>}
         {mode === 'recover' && <button type="button" className="link small" onClick={() => { setMode('login'); setErr(''); setNeed2fa(false); setSent(false); }}>← Quay lại đăng nhập</button>}
@@ -322,6 +325,52 @@ function CaptchaBox({ onChange }) {
 const GoogleG = () => (<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>);
 
 // Luồng đăng nhập Google: chờ xác thực trên trình duyệt -> (mã 2 bước) -> (tạo tài khoản mới) -> mở khóa tin mã hóa.
+// Đăng nhập máy mới bằng QR: hiện mã, máy đang đăng nhập quét + duyệt -> nhận token và khóa danh tính (niêm phong cho
+// khóa tạm của máy này, máy chủ không đọc được) -> không cần mật khẩu, vẫn đọc được lịch sử mã hóa.
+function QrLoginFlow({ onLogin, onCancel }) {
+  const [qr, setQr] = useState(null), [code, setCode] = useState(''), [left, setLeft] = useState(0), [err, setErr] = useState(''), [round, setRound] = useState(0);
+  useEffect(() => {
+    let stop = false;
+    (async () => {
+      try {
+        setErr(''); setQr(null);
+        const eph = crypto.newEphemeral();
+        const secret = btoa(String.fromCharCode(...window.crypto.getRandomValues(new Uint8Array(32)))).replace(/[+/=]/g, (c) => ({ '+': '-', '/': '_', '=': '' })[c]);
+        const b = await api.qrLoginBegin(eph.publicKey, secret);
+        const text = `reachat-login:${b.sid}.${eph.publicKey}`;
+        if (stop) return;
+        setCode(text); setQr(await QRCode.toDataURL(text, { margin: 1, width: 240 }));
+        while (!stop && Date.now() < b.expiresAt) {
+          setLeft(Math.max(0, Math.round((b.expiresAt - Date.now()) / 1000)));
+          const r = await api.qrLoginPoll(b.sid, secret).catch((e) => { if (e.status === 410) return { expired: true }; throw e; });
+          if (stop) return;
+          if (r.expired) break;
+          if (!r.pending) {
+            const un = r.user.username;
+            if (!crypto.openKeyBundle(un, r.sealed, eph.secretKey)) throw new Error('Không mở được gói khóa mã hóa — hãy thử lại');
+            localStorage.setItem('reachat.resync.' + un, '1');          // tải lại lịch sử để giải mã bằng khóa vừa nhận
+            onLogin({ token: r.token, user: r.user }); return;
+          }
+          await new Promise((ok) => setTimeout(ok, 2000));
+        }
+        if (!stop) { setQr(null); setErr('Mã đã hết hạn.'); }
+      } catch (e) { if (!stop) setErr(e.message || String(e)); }
+    })();
+    return () => { stop = true; };
+  }, [round]);
+  return (<div className="auth-card qr-login">
+    <h2>📱 Đăng nhập bằng mã QR</h2>
+    <p className="muted small">Trên máy <b>đang đăng nhập</b> ReaChat: Cài đặt → Bảo mật → <b>Đăng nhập máy khác bằng QR</b>, rồi quét mã này (hoặc dán mã bên dưới).</p>
+    {qr ? <img className="qr-img" src={qr} alt="Mã QR đăng nhập" data-code={code} /> : !err && <div className="spinner" />}
+    {qr && <div className="muted small">Hết hạn sau {left} giây</div>}
+    {qr && <button type="button" className="link small" onClick={() => { navigator.clipboard?.writeText(code); }}>📋 Sao chép mã (dán ở máy kia)</button>}
+    {err && <div className="error">{err}</div>}
+    {err && <button type="button" className="primary" onClick={() => setRound((n) => n + 1)}>Tạo mã mới</button>}
+    <p className="notice small">⚠️ Chỉ quét mã hiện trên <b>máy của chính bạn</b>. Người khác đưa bạn quét mã là để chiếm tài khoản.</p>
+    <button type="button" className="link small" onClick={() => onCancel('')}>← Quay lại đăng nhập</button>
+  </div>);
+}
+
 // Tin nhắn mã hóa đầu-cuối được bọc bằng MẬT KHẨU ReaChat: máy mới phải nhập mật khẩu để đọc lịch sử.
 function GoogleFlow({ nonce, onLogin, onCancel }) {
   const [stage, setStage] = useState('wait');          // wait | code | otp | register | unlock
@@ -514,6 +563,7 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
   const [editing, setEditing] = useState(null);
   const [reply, setReply] = useState(null);         // tin đang trả lời
   const [forwarding, setForwarding] = useState(null);
+  const [editHist, setEditHist] = useState(null);          // tin đang xem lịch sử sửa
   const [showGroup, setShowGroup] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -662,12 +712,42 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
   const setLabels = (ls) => { setLabelsRaw(ls); setLabelsT(Date.now()); };
   useEffect(() => { try { localStorage.setItem('reachat.labels.' + user.username, JSON.stringify(labels)); localStorage.setItem('reachat.labelsT.' + user.username, JSON.stringify(labelsT)); } catch {} }, [labels, labelsT, user.username]);
   // Tin đánh dấu sao: { [msgId]: { on, t, convId, preview, at } }
+  // Biệt danh đặt cho người khác: { username: { name, t } } — đồng bộ giữa các máy (name '' = đã xóa).
+  const [nicknames, setNicknames] = useState(() => loadLS('reachat.nicks.' + user.username, {}));
+  useEffect(() => { try { localStorage.setItem('reachat.nicks.' + user.username, JSON.stringify(nicknames)); } catch {} }, [nicknames, user.username]);
+  const nickOf = (u) => (u && nicknames[u]?.name) || '';
+  const setNick = (u, name) => setNicknames((n) => ({ ...n, [u]: { name: String(name || '').trim().slice(0, 40), t: Date.now() } }));
+  const [nickEdit, setNickEdit] = useState(null);          // username đang đặt biệt danh
+  // Trò chuyện ẩn: convPrefs[id].secret; mã PIN (băm) đồng bộ; nhập đúng PIN vào ô tìm kiếm -> hiện tạm.
+  const [secretPin, setSecretPin] = useState(() => loadLS('reachat.secretPin.' + user.username, { t: 0 }));
+  useEffect(() => { try { localStorage.setItem('reachat.secretPin.' + user.username, JSON.stringify(secretPin)); } catch {} }, [secretPin, user.username]);
+  const [revealSecret, setRevealSecret] = useState(false);
+  const [pinSetup, setPinSetup] = useState(null);          // { hideId?, changing? }
   const [starred, setStarred] = useState(() => loadLS('reachat.starred.' + user.username, {}));
   useEffect(() => { try { localStorage.setItem('reachat.starred.' + user.username, JSON.stringify(starred)); } catch {} }, [starred, user.username]);
   const toggleStar = (m) => setStarred((s) => ({ ...s, [m.id]: { on: !s[m.id]?.on, t: Date.now(), convId: m.conversationId, preview: msgPreview(m).slice(0, 120), at: m.createdAt, from: m.senderUsername } }));
 
   // ---- Đồng bộ giữa các thiết bị: tài liệu mã hóa bằng khóa riêng (như Cloud), máy chủ chỉ giữ bản mã ----
   const syncRef = useRef({ version: 0, hash: '', ready: false, timer: null, busy: false });
+  // Khóa nhóm nằm trong ref -> đổi số này để hẹn gửi tài liệu đồng bộ (máy khác của mình cần khóa để đọc tin nhóm).
+  const [groupKeysVer, setGroupKeysVer] = useState(0);
+  const persistGroupKeys = () => { saveGroupKeys(user.username, groupKeysRef.current); setGroupKeysVer((v) => v + 1); };
+  const docGroupKeys = () => Object.fromEntries(Object.entries(groupKeysRef.current)
+    .filter(([id, g]) => id !== selfConvId && g?.key).map(([id, g]) => [id, { key: g.key, old: g.old || [], by: g.by, t: g.t || 0 }]));
+  // Gộp khóa nhóm từ máy khác vào máy này; hội thoại vừa có thêm khóa -> tải lại lịch sử để giải mã các tin từng lỗi.
+  const applyGroupKeys = (gk) => {
+    const gained = [];
+    for (const [id, g] of Object.entries(gk || {})) {
+      if (id === selfConvId || !g?.key) continue;
+      const cur = groupKeysRef.current[id];
+      const merged = mergeGroupKey(cur, g);
+      const had = new Set(cur?.key ? [cur.key, ...(cur.old || [])] : []);
+      if ([merged.key, ...(merged.old || [])].some((k) => !had.has(k))) { groupKeysRef.current[id] = merged; gained.push(id); }
+    }
+    if (!gained.length) return;
+    saveGroupKeys(user.username, groupKeysRef.current);
+    for (const id of gained) rtRef.current?.syncConversation(id);
+  };
   const draftDoc = () => {
     const pre = 'reachat.draft.' + user.username + '.', preT = 'reachat.draftT.' + user.username + '.', out = {};
     try { for (const k of Object.keys(localStorage)) {
@@ -676,8 +756,11 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
     return out;
   };
   const localDoc = () => ({ ...emptyDoc(), convPrefs, labels: { list: labels, t: labelsT }, drafts: draftDoc(),
-    hidden: Object.fromEntries([...hidden].map((id) => [id, 1])), starred });
+    hidden: Object.fromEntries([...hidden].map((id) => [id, 1])), starred, groupKeys: docGroupKeys(), nicknames, secretPin });
   const applyDoc = (d) => {
+    applyGroupKeys(d.groupKeys);
+    setNicknames(d.nicknames || {});
+    setSecretPin(d.secretPin || { t: 0 });
     setConvPrefs(d.convPrefs || {});
     setLabelsRaw(d.labels?.list || []); setLabelsT(d.labels?.t || 0);
     setStarred(d.starred || {});
@@ -731,7 +814,7 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
     if (!syncRef.current.ready) return;
     clearTimeout(syncRef.current.timer);
     syncRef.current.timer = setTimeout(() => pushSync(localDoc()).catch(() => {}), 1500);
-  }, [convPrefs, labels, labelsT, starred, hidden, drafts]);
+  }, [convPrefs, labels, labelsT, starred, hidden, drafts, groupKeysVer, nicknames, secretPin]);
   const [convFilter, setConvFilter] = useState('all');          // all | unread | archived | <id nhãn>
   const [showLabels, setShowLabels] = useState(false);
   const clearConversation = async (id) => {
@@ -895,7 +978,7 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
         const k2 = crypto.openGroupKey(env, sealer.publicKey, user.username);
         if (!k2 || k2 === cur.key || (cur.old || []).includes(k2)) return;
         cur.old = [...(cur.old || []), k2];
-        saveGroupKeys(user.username, groupKeysRef.current);
+        persistGroupKeys();
         const meta = convMetaRef.current[m.conversationId];
         if (meta && data.by !== user.username && (meta.ownerId === user.id || cur.by === user.username)) shareGroupKeysRef.current?.(meta, [data.by], { [data.by]: sealer.publicKey });
         return;
@@ -904,8 +987,8 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
       if (!key || (cur && cur.key === key)) return;
       const shared = (data.oldKeys?.[user.username] || []).map((e) => crypto.openGroupKey(e, sealer.publicKey, user.username)).filter(Boolean);
       const old = [...new Set([...(cur ? [cur.key, ...(cur.old || [])] : []), ...shared])].filter((k) => k !== key);
-      groupKeysRef.current[m.conversationId] = { key, by: data.by, old };
-      saveGroupKeys(user.username, groupKeysRef.current);
+      groupKeysRef.current[m.conversationId] = { key, by: data.by, old, t: Date.now() };
+      persistGroupKeys();
       // Vừa được chia khóa (thành viên mới) -> kéo lịch sử nhóm để giải mã các tin trước đó.
       if (data.oldKeys) rtRef.current?.syncConversation(m.conversationId);   // kể cả khi trước đó tự tạo khóa riêng
     } catch {}
@@ -996,7 +1079,13 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
         // khóa chung sẽ chia lại cho mình (xem cacheKeydist) rồi lịch sử được giải mã lại. Mỗi nhóm chỉ xin 1 lần/phiên.
         if (!askedKeyRef.current.has(m.conversationId) && convMetaRef.current[m.conversationId]) {
           askedKeyRef.current.add(m.conversationId);
-          setTimeout(() => ensureGroupKeyRef.current?.(m.conversationId), 1500);   // chờ các gói khóa trong lô sync
+          // Chờ các gói khóa trong lô sync VÀ tài liệu đồng bộ (máy khác của mình có thể đã giữ khóa) rồi mới tự phát khóa.
+          const cid = m.conversationId;
+          (async () => {
+            await new Promise((r) => setTimeout(r, 1500));
+            for (let i = 0; i < 40 && !syncRef.current.ready; i++) await new Promise((r) => setTimeout(r, 250));
+            if (!groupKeysRef.current[cid]?.key) ensureGroupKeyRef.current?.(cid);
+          })();
         }
         return '[chưa có khóa nhóm]';
       }
@@ -1085,6 +1174,64 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
     setToast({ text, action });
     toastTimer.current = setTimeout(() => setToast(null), action ? 8000 : 4000); // có "Hoàn tác" -> giữ lâu hơn
   }, []);
+  // Đánh dấu mọi hội thoại đã đọc (gửi con trỏ đã đọc cho từng hội thoại + bỏ cờ "chưa đọc" đặt tay).
+  const hideSecret = (id) => {
+    setPref(id, { secret: true });
+    if (activeRef.current?.conversationId === id && !revealSecret) { setActive(null); setMessages([]); }
+    flashToast('🔒 Đã ẩn trò chuyện — gõ mã PIN vào ô Tìm tin nhắn để xem lại');
+  };
+  const savePin = async (pin) => {
+    const h = await hashPin(pin);
+    setSecretPin({ ...h, t: Date.now() });
+    const id = pinSetup?.hideId; setPinSetup(null);
+    if (id) hideSecret(id); else flashToast('🔒 Đã đổi mã PIN');
+  };
+  // Quên PIN: xóa (phía mình) mọi trò chuyện ẩn rồi bỏ PIN — không để lộ nội dung đã ẩn.
+  const resetSecretRef = useRef(null);
+  resetSecretRef.current = async () => {
+    for (const [id, x] of Object.entries(convPrefsRef.current)) if (x?.secret) { await clearConversation(id); setPref(id, { secret: false }); }
+    setSecretPin({ hash: '', salt: '', t: Date.now() }); setRevealSecret(false);
+    flashToast('Đã xóa các trò chuyện ẩn và bỏ mã PIN');
+  };
+  useEffect(() => {
+    const h = () => resetSecretRef.current?.();
+    window.addEventListener('reachat:secret-reset', h); return () => window.removeEventListener('reachat:secret-reset', h);
+  }, []);
+  const markAllRead = async () => {
+    const ids = Object.entries(unread).filter(([, n]) => n > 0).map(([id]) => id);
+    for (const id of ids) { try { await markRead(id, await loadView(id)); } catch {} }
+    setConvPrefs((p) => Object.fromEntries(Object.entries(p).map(([id, x]) => [id, x?.unread ? { ...x, unread: false, t: Date.now() } : x])));
+    flashToast('✓ Đã đánh dấu tất cả là đã đọc');
+  };
+  // Phím tắt: Ctrl+K tìm kiếm · Alt+↑/↓ hội thoại trước/sau · Esc đóng cửa sổ con · Ctrl+/ xem danh sách phím tắt.
+  const navRef = useRef({ rows: [], activeId: null, open: null });
+  useEffect(() => {
+    const onKey = (e) => {
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (ctrl && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault(); const s = document.querySelector('input.search'); s?.focus(); s?.select(); return;
+      }
+      if (ctrl && e.key === '/') { e.preventDefault(); flashToast('⌨️ Ctrl+K tìm kiếm · Alt+↑/↓ chuyển hội thoại · Esc đóng cửa sổ · Ctrl+V dán ảnh'); return; }
+      if (e.altKey && !ctrl && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        const { rows, activeId, open } = navRef.current; if (!rows.length || !open) return;
+        e.preventDefault();
+        const i = rows.findIndex((r) => r.id === activeId);
+        const next = rows[i < 0 ? 0 : Math.min(rows.length - 1, Math.max(0, i + (e.key === 'ArrowUp' ? -1 : 1)))];
+        if (next?.meta) open(next.meta);
+        return;
+      }
+      if (e.key === 'Escape') {
+        const bds = document.querySelectorAll('.modal-backdrop');
+        if (bds.length) { e.preventDefault(); bds[bds.length - 1].click(); }
+      }
+    };
+    window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
+  }, [flashToast]);
+  // Hàm ngoài component (vd jumpToMsg) báo toast qua sự kiện cửa sổ.
+  useEffect(() => {
+    const h = (e) => flashToast(String(e.detail || ''));
+    window.addEventListener('reachat:toast', h); return () => window.removeEventListener('reachat:toast', h);
+  }, [flashToast]);
 
   useEffect(() => {
     const k = 'reachat.keyReset.' + user.username;
@@ -1123,6 +1270,11 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
       if (convPrefsRef.current[m.conversationId]?.muted && !mentioned) return;
       // Giờ yên lặng: chỉ người ưu tiên mới được báo.
       if (isQuietNow(quietRef.current) && !(quietRef.current.priority || []).includes(m.senderUsername)) return;
+      if (convPrefsRef.current[m.conversationId]?.secret) {           // trò chuyện ẩn: không lộ người gửi / nội dung
+        playMessage();
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') new Notification('ReaChat', { body: translateText('Bạn có tin nhắn mới') });
+        return;
+      }
       const title = (mentioned ? '🔔 Nhắc tới bạn — ' : '') + (m.senderUsername ? '@' + m.senderUsername : 'Tin nhắn mới');
       if (m.type === 'call') { const o = callInfo(m); if (!o || !['missed', 'cancelled'].includes(o.status)) return; }
       playMessage();                                              // âm báo (tắt được trong Cài đặt → Tùy chọn)
@@ -1165,6 +1317,15 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
     }
     const prev = await db.getMessageById(m.id);
     if (m.recalled && m.expireAt) wipeLocal(m, prev?.body);       // tự hủy: xóa khóa/ảnh đã giải mã + xác nhận
+    // Lịch sử sửa: giữ bản đọc được TRƯỚC khi sửa (chỉ trên máy này, trong cache cục bộ); thu hồi thì xóa luôn.
+    try {
+      if (m.recalled && prev && !prev.recalled) await db.setMeta('edits.' + m.id, '');
+      else if (prev && !m.recalled && m.editedAt && (prev.editedAt || null) !== m.editedAt && prev.body !== plaintext && !DECRYPT_FAIL.has(prev.body) && !DECRYPT_FAIL.has(plaintext)) {
+        const hist = JSON.parse((await db.getMeta('edits.' + m.id)) || '[]');
+        hist.push({ body: prev.body, at: prev.editedAt || prev.createdAt });
+        await db.setMeta('edits.' + m.id, JSON.stringify(hist.slice(-20)));
+      }
+    } catch {}
     // Đang xem rộng hơn mặc định (đã "tải tin cũ") -> tin mới không được đẩy tin cũ nhất ra khỏi khung.
     if (!prev && viewLimitRef.current > 40 && activeRef.current?.conversationId === m.conversationId) viewLimitRef.current++;
     await db.upsertMessage({ ...m, body: plaintext });
@@ -1195,8 +1356,8 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
       if (mem.username === user.username || !mem.publicKey) continue;
       keys[mem.username] = crypto.sealGroupKey(key, mem.publicKey, user.username);
     }
-    groupKeysRef.current[c.id] = { key, by: user.username };
-    saveGroupKeys(user.username, groupKeysRef.current);
+    groupKeysRef.current[c.id] = { key, by: user.username, t: Date.now() };
+    persistGroupKeys();
     rtRef.current?.send({ conversationId: c.id, body: JSON.stringify({ keys, by: user.username }), enc: false, msgType: 'keydist' });
   }, [user.id, user.username]);
 
@@ -1224,8 +1385,8 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
     const { key, keys } = await job;
     delete ensuringRef.current[convId];
     if (groupKeysRef.current[convId]?.key) return groupKeysRef.current[convId].key;   // khóa tới trong lúc chờ
-    groupKeysRef.current[convId] = { key, by: user.username };
-    saveGroupKeys(user.username, groupKeysRef.current);
+    groupKeysRef.current[convId] = { key, by: user.username, t: Date.now() };
+    persistGroupKeys();
     rtRef.current?.send({ conversationId: convId, body: JSON.stringify({ keys, by: user.username, upgrade: true }), enc: false, msgType: 'keydist' });
     return key;
   };
@@ -1257,8 +1418,8 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
       if (mem.username === user.username || !crypto.validPublicKey(mem.publicKey)) continue;
       keys[mem.username] = crypto.sealGroupKey(key, mem.publicKey, user.username);
     }
-    groupKeysRef.current[c.id] = { key, by: user.username, old: g?.key ? [g.key, ...(g.old || [])] : [] };
-    saveGroupKeys(user.username, groupKeysRef.current);
+    groupKeysRef.current[c.id] = { key, by: user.username, old: g?.key ? [g.key, ...(g.old || [])] : [], t: Date.now() };
+    persistGroupKeys();
     rtRef.current?.send({ conversationId: c.id, body: JSON.stringify({ keys, by: user.username, rot: true }), enc: false, msgType: 'keydist' });
   }, [user.username]);
 
@@ -1337,6 +1498,9 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
           return prev;
         }),
         onMessage: async (m) => {
+          // Hội thoại 1-1 do người kia vừa tạo (tin đầu tiên): máy chủ không gửi conversation:new -> xin lại danh sách,
+          // nếu không dòng hội thoại hiện "@…" và bấm không mở được.
+          if (!convMetaRef.current[m.conversationId]) rtRef.current?.requestConversations();
           const text = await decodeIncoming(m);
           await persist(m, text);
           if (m.type !== 'keydist' && m.senderUsername && m.senderUsername !== user.username && !isRequestConv(m.conversationId, m.senderUsername)) notify(m, text);
@@ -1871,9 +2035,15 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
     return url;
   }, [resolvePeerKey, user.username]);
 
+  // forwarding: 1 tin hoặc mảng tin (chọn nhiều) -> gửi lần lượt theo thứ tự thời gian.
   const doForward = async (targetMeta) => {
-    const m = forwarding; setForwarding(null);
-    if (!m || !targetMeta) return;
+    const list = [].concat(forwarding || []).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    setForwarding(null);
+    if (!list.length || !targetMeta) return;
+    for (const m of list) await forwardOne(m, targetMeta);
+    if (list.length > 1) flashToast(`Đã chuyển tiếp ${list.length} tin`);
+  };
+  const forwardOne = async (m, targetMeta) => {
     const peerU = peerUsernameOf(targetMeta);
     let body = m.body, enc = false, msgType = m.type;
     if (m.type === 'text') { const r = await encryptFor(targetMeta.id, targetMeta.type, peerU, m.body); body = r.body; enc = r.enc; }
@@ -1927,7 +2097,7 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
         if (!cur) groupKeysRef.current[cid] = g;
         else for (const k of [g.key, ...(g.old || [])]) if (k && k !== cur.key && !(cur.old || []).includes(k)) cur.old = [...(cur.old || []), k];
       }
-      saveGroupKeys(user.username, groupKeysRef.current);
+      persistGroupKeys();
     } catch {}
     try { const mine = { ...mediaKeysRef.current }; Object.assign(mediaKeysRef.current, JSON.parse(L.mediakeys || '{}'), mine); saveMediaKeys(user.username, mediaKeysRef.current); } catch {}
     // Tùy chọn khác: chỉ điền khi máy này chưa có (không đè cài đặt hiện tại).
@@ -1950,9 +2120,14 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
   const filterOn = (f) => f.kind !== 'text' || f.convId || f.sender || f.from || f.to;
   const runSearch = async (q, f = sFilter) => {
     setSearch(q);
+    if (!q.trim()) setRevealSecret(false);                      // xóa ô tìm kiếm -> trò chuyện ẩn lại biến mất
+    if (/^\d{4,6}$/.test(q) && secretPin?.hash && (await hashPin(q, secretPin.salt)).hash === secretPin.hash) {
+      setRevealSecret(true); setSearch(''); setSearchResults(null); flashToast('🔓 Đang hiện trò chuyện ẩn — gõ rồi xóa ô tìm kiếm để ẩn lại'); return;
+    }
     if (!q.trim() && !filterOn(f)) { setSearchResults(null); return; }
     const day = (s, end) => (s ? new Date(s + (end ? 'T23:59:59' : 'T00:00:00')).getTime() : null);
-    setSearchResults(await db.searchMessages(q.trim(), 100, { kind: f.kind, convId: f.convId || null, sender: f.sender.trim() || null, from: day(f.from), to: day(f.to, true) }));
+    const found = await db.searchMessages(q.trim(), 100, { kind: f.kind, convId: f.convId || null, sender: f.sender.trim() || null, from: day(f.from), to: day(f.to, true) });
+    setSearchResults(revealSecret ? found : found.filter((r) => !convPrefsRef.current[r.conversationId]?.secret));
   };
   const setFilter = (patch) => { const f = { ...sFilter, ...patch }; setSFilter(f); runSearch(search, f); };
 
@@ -2385,6 +2560,7 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
     const title = isGrp ? (meta?.title || 'Nhóm…') : (peerUsernameOf(meta) || '…');
     return { id, meta, title, type: isGrp ? 'group' : 'direct', ...previews[id] };
   }).filter((r) => r.id !== selfConvId)                // Cloud hiển thị riêng ở đầu danh sách
+    .filter((r) => revealSecret || !convPrefs[r.id]?.secret)      // trò chuyện ẩn: chỉ hiện khi đã nhập đúng PIN
     .filter((r) => !(convPrefs[r.id]?.clearedAt && (r.lastAt || 0) <= convPrefs[r.id].clearedAt))   // đã xóa, chưa có tin mới
     .map((r) => ({ ...r, request: isRequestRow(r) }))
     .sort((a, b) => (!!convPrefs[b.id]?.pinned - !!convPrefs[a.id]?.pinned) || ((b.lastAt || 0) - (a.lastAt || 0)));
@@ -2399,6 +2575,7 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
     if (convFilter !== 'all') return (pr.labels || []).includes(convFilter);
     return true;
   });
+  navRef.current = { rows: shownRows, activeId: active?.conversationId || null, open: openByMeta };
 
   const activeMeta = active && convMeta[active.conversationId];
   const activeTyping = (typing[active?.conversationId] || []).filter((u) => u !== user.username);
@@ -2532,6 +2709,8 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
           <button className={convFilter === 'unread' ? 'on' : ''} onClick={() => setConvFilter('unread')}>Chưa đọc</button>
           {labels.map((l) => <button key={l.id} className={convFilter === l.id ? 'on' : ''} onClick={() => setConvFilter(l.id)}><span className="label-dot" style={{ background: l.color }} /> <span data-user-content>{l.name}</span></button>)}
           {archivedRows.length > 0 && <button className={convFilter === 'archived' ? 'on' : ''} onClick={() => setConvFilter('archived')}>🗄️ <span>Lưu trữ</span> ({archivedRows.length})</button>}
+          {(Object.values(unread).some((n) => n > 0) || Object.values(convPrefs).some((x) => x?.unread)) &&
+            <button title="Đánh dấu tất cả đã đọc" onClick={markAllRead}>✓</button>}
           <button title="Tin đã đánh dấu sao" onClick={() => setShowStarred(true)}>⭐</button>
           <button className="icon-btn" title="Quản lý nhãn" onClick={() => setShowLabels(true)}>🏷️</button>
         </div>}
@@ -2572,12 +2751,13 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
                   <div className="conv-row">
                     <Avatar name={r.type === 'group' ? r.title : peerU} src={r.type === 'group' ? r.meta?.avatar || null : mem?.avatar} size={40} />
                     <div className="conv-main">
-                      <b>{r.type === 'group' ? (r.meta?.channel ? '📢 ' : r.meta?.meeting ? '📹 ' : '') + r.title : (mem?.displayName || '@' + r.title)}{peerU && online.has(peerU) && <span className="dot-on" />}</b>
+                      <b>{r.type === 'group' ? (r.meta?.channel ? '📢 ' : r.meta?.meeting ? '📹 ' : '') + r.title : (nickOf(peerU) || mem?.displayName || '@' + r.title)}{peerU && online.has(peerU) && <span className="dot-on" />}</b>
                       <div className="muted preview">{drafts[r.id] && active?.conversationId !== r.id
                         ? <><span className="draft-tag">Nháp:</span> <span data-user-content>{drafts[r.id]}</span></> : (r.preview || '')}</div>
                     </div>
                     <div className="conv-side">
                       <div className="conv-flags">
+                        {pr.secret && <span title="Trò chuyện ẩn">🔒</span>}
                         {pr.pinned && <span title="Đã ghim"><Icon name="pin" size={13} /></span>}
                         {pr.muted && <span title="Đã tắt thông báo"><Icon name="bellOff" size={13} /></span>}
                         {(pr.labels || []).map((id) => labels.find((l) => l.id === id)).filter(Boolean).map((l) => <span key={l.id} className="label-dot" title={l.name} style={{ background: l.color }} />)}
@@ -2600,6 +2780,11 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
                       {labels.length > 0 && <div className="menu-labels">{labels.map((l) => { const on = (pr.labels || []).includes(l.id); return (
                         <button key={l.id} className={on ? 'on' : ''} onClick={() => setPref(r.id, { labels: on ? (pr.labels || []).filter((x) => x !== l.id) : [...(pr.labels || []), l.id] })}>
                           <span className="label-dot" style={{ background: l.color }} /> <span data-user-content>{l.name}</span> {on ? '✓' : ''}</button>); })}</div>}
+                      {pr.secret
+                        ? <><button onClick={() => { setPref(r.id, { secret: false }); setRowMenu(null); flashToast('Đã bỏ ẩn trò chuyện'); }}>🔓 <span>Bỏ ẩn trò chuyện</span></button>
+                            <button onClick={() => { setPinSetup({ changing: true }); setRowMenu(null); }}>🔢 <span>Đổi mã PIN</span></button></>
+                        : <button onClick={() => { setRowMenu(null); secretPin?.hash ? hideSecret(r.id) : setPinSetup({ hideId: r.id }); }}>🔒 <span>Ẩn trò chuyện</span></button>}
+                      {r.type === 'direct' && peerU && <button onClick={() => { setNickEdit(peerU); setRowMenu(null); }}>✏️ <span>{nickOf(peerU) ? 'Đổi biệt danh' : 'Đặt biệt danh'}</span></button>}
                       <button onClick={() => { setShowLabels(true); setRowMenu(null); }}>🏷️ <span>{labels.length ? 'Quản lý nhãn' : 'Tạo nhãn phân loại'}</span></button>
                       <button className="danger" onClick={() => (confirmClear === r.id ? clearConversation(r.id) : setConfirmClear(r.id))}>
                         <Icon name="trash" size={16} />{confirmClear === r.id ? 'Bấm lần nữa để xóa' : 'Xóa cuộc trò chuyện'}</button>
@@ -2625,6 +2810,8 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
             onceViewed: (id) => rtRef.current?.onceViewed(id),
             gcalls,
             report: (m) => setReporting(m),
+            showEdits: (m) => setEditHist(m),
+            nickOf,
             downloadBig,
             downloadSmall: async (m, meta) => {                       // tệp nhỏ: giải mã rồi lưu qua hộp thoại Lưu của app
               const url = await getMediaURL(m, meta);
@@ -2637,10 +2824,10 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
           <ChatView active={active} meta={activeMeta} me={user} messages={messages.filter((m) => !hidden.has(m.id) && !(convPrefs[active.conversationId]?.clearedAt >= (m.createdAt || 0)))}
             online={online} typingUsers={activeTyping} status={status[active.conversationId]} reactions={reactions}
             editing={editing} onCancelEdit={() => setEditing(null)} reply={reply} onCancelReply={() => setReply(null)}
-            onSend={sendMessage} onSendFile={sendFile} onSendSticker={(e) => sendMessage(e, 'sticker')}
+            onSend={(...a) => { if (showRequests) setShowRequests(false); return sendMessage(...a); }} onSendFile={sendFile} onSendSticker={(e) => sendMessage(e, 'sticker')}
             onTyping={() => rtRef.current?.typing(active.conversationId, true)}
             onRecall={(id) => rtRef.current?.recall(id)} onEdit={(m) => setEditing({ id: m.id, body: m.enc ? '' : m.body })}
-            onReply={(m) => setReply(m)} onReact={(id, e) => rtRef.current?.react(id, e)} onForward={(m) => setForwarding(m)}
+            onReply={(m) => setReply(m)} onReact={(id, e) => rtRef.current?.react(id, e)} onForward={(m) => setForwarding(m)} onForwardMany={(list) => setForwarding(list)}
             peerUsername={active.peerUsername} memberOf={memberOf}
             pinnedIds={pins[active.conversationId] || []} pinnedMsgs={pinnedMsgs} onTogglePin={togglePin}
             hiddenHas={(id) => hidden.has(id)} onHide={hideMessage}
@@ -2694,6 +2881,10 @@ function Chat({ session, onLogout, onUpdateUser, onUpdateToken }) {
         onUnstar={(it) => setStarred((s) => ({ ...s, [it.id]: { ...s[it.id], on: false, t: Date.now() } }))} onClose={() => setShowStarred(false)} />}
       {profileOf && <UserProfileModal username={profileOf} me={user} onClose={() => setProfileOf(null)} onMessage={(u) => { setShowGroupInfo(false); openDirect(u); }} onAddFriend={(u) => api.sendFriendRequest(u)} />}
       {showLabels && <LabelsModal labels={labels} onChange={(ls) => { setLabels(ls); const ids = new Set(ls.map((l) => l.id)); if (convFilter !== 'all' && convFilter !== 'unread' && convFilter !== 'archived' && !ids.has(convFilter)) setConvFilter('all'); }} onClose={() => setShowLabels(false)} />}
+      {pinSetup && <PinSetupModal changing={!!pinSetup.changing} onClose={() => setPinSetup(null)} onSave={savePin} />}
+      {nickEdit && <NicknameModal username={nickEdit} current={nickOf(nickEdit)} onClose={() => setNickEdit(null)}
+        onSave={(name) => { setNick(nickEdit, name); setNickEdit(null); flashToast(name.trim() ? '✏️ Đã đặt biệt danh' : 'Đã xóa biệt danh'); }} />}
+      {editHist && <EditHistoryModal m={editHist} onClose={() => setEditHist(null)} />}
       {forwarding && <ForwardModal rows={rows} onClose={() => setForwarding(null)} onPick={doForward} />}
       {safety && <SafetyNumberModal me={user.username} safety={safety} verified={!!(keySeen[safety.peerUsername]?.verified && keySeen[safety.peerUsername]?.pk === safety.pk)}
         onVerify={(ok) => markVerified(safety.peerUsername, safety.pk, ok)} onClose={() => setSafety(null)} />}
@@ -2808,6 +2999,64 @@ function AddContact({ onAdd }) {
     <input placeholder="+ kết bạn @username" value={v} onChange={(e) => setV(e.target.value)} />
     {err && <div className="error small">{err}</div>}
   </form>);
+}
+
+// Mã PIN trò chuyện ẩn: PBKDF2-SHA256 (muối ngẫu nhiên, 150k vòng) — chỉ lưu bản băm.
+async function hashPin(pin, saltB64) {
+  const salt = saltB64 ? Uint8Array.from(atob(saltB64), (c) => c.charCodeAt(0)) : window.crypto.getRandomValues(new Uint8Array(16));
+  const base = await window.crypto.subtle.importKey('raw', new TextEncoder().encode(String(pin)), 'PBKDF2', false, ['deriveBits']);
+  const bits = await window.crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 150000 }, base, 256);
+  const b64 = (u) => btoa(String.fromCharCode(...new Uint8Array(u)));
+  return { hash: b64(bits), salt: b64(salt) };
+}
+// Đặt / đổi mã PIN (4–6 số, nhập 2 lần).
+function PinSetupModal({ changing, onClose, onSave }) {
+  const [a, setA] = useState(''), [b, setB] = useState(''), [err, setErr] = useState('');
+  return (<div className="modal-backdrop" onClick={onClose}>
+    <form className="modal pin-modal" onClick={(e) => e.stopPropagation()} onSubmit={(e) => {
+      e.preventDefault();
+      if (!/^\d{4,6}$/.test(a)) return setErr('Mã PIN gồm 4–6 chữ số');
+      if (a !== b) return setErr('Hai lần nhập không khớp');
+      onSave(a);
+    }}>
+      <h3>🔒 {changing ? 'Đổi mã PIN trò chuyện ẩn' : 'Đặt mã PIN để ẩn trò chuyện'}</h3>
+      <p className="muted small">Trò chuyện ẩn biến khỏi danh sách và không hiện nội dung trong thông báo. Muốn xem lại: gõ mã PIN vào ô <b>Tìm tin nhắn</b>.</p>
+      <input type="password" inputMode="numeric" maxLength={6} placeholder="Mã PIN (4–6 số)" value={a} onChange={(e) => setA(e.target.value.replace(/\D/g, ''))} autoFocus />
+      <input type="password" inputMode="numeric" maxLength={6} placeholder="Nhập lại mã PIN" value={b} onChange={(e) => setB(e.target.value.replace(/\D/g, ''))} />
+      {err && <div className="error small">{err}</div>}
+      <div className="modal-actions"><button type="button" className="ghost" onClick={onClose}>Hủy</button><button className="primary">Lưu</button></div>
+    </form>
+  </div>);
+}
+
+// Đặt biệt danh (chỉ mình thấy, đồng bộ giữa các máy của mình); để trống = xóa.
+function NicknameModal({ username, current, onClose, onSave }) {
+  const [v, setV] = useState(current || '');
+  return (<div className="modal-backdrop" onClick={onClose}>
+    <form className="modal nickname-modal" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); onSave(v); }}>
+      <h3>✏️ Biệt danh cho @{username}</h3>
+      <input value={v} maxLength={40} placeholder="Tên gợi nhớ (để trống để xóa)" onChange={(e) => setV(e.target.value)} autoFocus />
+      <p className="muted small">Chỉ bạn nhìn thấy biệt danh này — người kia không được báo.</p>
+      <div className="modal-actions"><button type="button" className="ghost" onClick={onClose}>Hủy</button><button className="primary">Lưu</button></div>
+    </form>
+  </div>);
+}
+
+// Lịch sử sửa của một tin: các bản trước (chỉ những bản máy này từng nhận được, lưu trong cache cục bộ).
+function EditHistoryModal({ m, onClose }) {
+  const [hist, setHist] = useState(null);
+  useEffect(() => { db.getMeta('edits.' + m.id).then((v) => { try { setHist(JSON.parse(v || '[]')); } catch { setHist([]); } }).catch(() => setHist([])); }, [m.id]);
+  return (<div className="modal-backdrop" onClick={onClose}>
+    <div className="modal edit-history" onClick={(e) => e.stopPropagation()}>
+      <h3>✏️ Lịch sử sửa tin</h3>
+      {hist === null ? <p className="muted">Đang tải…</p> : (<ul className="edit-list">
+        {[...hist].reverse().map((h, i) => <li key={i}><time className="muted small">{fmtTime(h.at)}</time><div data-user-content>{h.body}</div></li>)}
+        {!hist.length && <li className="muted small">Máy này không có bản trước khi sửa (tin được sửa trước khi máy nhận được bản gốc).</li>}
+      </ul>)}
+      <div className="edit-now"><span className="muted small">Hiện tại · {fmtTime(m.editedAt)}</span><div data-user-content>{m.body}</div></div>
+      <div className="modal-actions"><button className="primary" onClick={onClose}>Đóng</button></div>
+    </div>
+  </div>);
 }
 
 function NewGroupModal({ onClose, onCreate }) {
@@ -2993,9 +3242,20 @@ function AppLockSettings({ username }) {
 }
 
 // Tùy chọn trên máy này: âm thanh, xem trước liên kết.
+// Cỡ chữ tin nhắn (theo máy): hệ số nhân cho nội dung tin + ô soạn.
+const FONT_SCALES = [[0.9, 'Nhỏ'], [1, 'Vừa'], [1.15, 'Lớn'], [1.3, 'Rất lớn']];
+const getFontScale = () => { try { return Number(localStorage.getItem('reachat.fontScale')) || 1; } catch { return 1; } };
+const applyFontScale = (v) => document.documentElement.style.setProperty('--msg-scale', String(v || 1));
+applyFontScale(getFontScale());
+
 function PrefsPanel() {
   const [s, setS] = useState(getSoundPrefs);
   const [lp, setLp] = useState(linkPreviewOn);
+  const [fs, setFs] = useState(getFontScale);
+  const setFont = (v) => { setFs(v); applyFontScale(v); try { localStorage.setItem('reachat.fontScale', String(v)); } catch {} };
+  const auto = window.reachat?.autostart;                      // chỉ có trên app desktop
+  const [as, setAs] = useState(null);                           // { supported, on }
+  useEffect(() => { auto?.get().then(setAs).catch(() => {}); }, []);
   const ringStop = useRef(null);
   useEffect(() => () => ringStop.current?.(), []);
   const upd = (p) => { setSoundPrefs(p); setS(getSoundPrefs()); };
@@ -3011,6 +3271,18 @@ function PrefsPanel() {
         <button type="button" className="ghost mini" onClick={testRing}>Thử nhạc chuông</button></div>
       <p className="muted small">Giờ yên lặng và hội thoại đã tắt thông báo thì không phát âm báo.</p>
     </section>
+    <section>
+      <h4>Cỡ chữ tin nhắn</h4>
+      <div className="row-inline font-scale">{FONT_SCALES.map(([v, l]) => (
+        <button key={v} type="button" className={'ghost mini' + (fs === v ? ' on' : '')} style={{ fontSize: 13 * v }} onClick={() => setFont(v)}>{l}</button>))}</div>
+    </section>
+    {auto && <section>
+      <h4>Khởi động</h4>
+      <label className="check-row"><input type="checkbox" disabled={!as?.supported} checked={!!as?.on}
+        onChange={(e) => auto.set(e.target.checked).then(setAs).catch(() => {})} />
+        <span>Tự mở ReaChat khi đăng nhập Windows (chạy nền ở khay hệ thống)</span></label>
+      {as && !as.supported && <p className="muted small">Chỉ dùng được ở bản cài đặt (bản chạy thử từ mã nguồn không đăng ký khởi động).</p>}
+    </section>}
     <section>
       <h4>Xem trước liên kết</h4>
       <label className="check-row"><input type="checkbox" checked={lp} onChange={(e) => { setLp(e.target.checked); try { localStorage.setItem('reachat.linkPreview', e.target.checked ? '1' : '0'); } catch {} }} />
@@ -3118,7 +3390,8 @@ function SecurityPanel({ user, onUpdateToken }) {
     {st.googleEnabled && <GoogleLinkSection st={st} reload={load} />}
     <ContactSection st={st} reload={load} />
     <PrivacySection />
-    <DevicesSection />
+    <DevicesSection me={user.username} />
+    <SecretChatsSection />
     <DeleteAccountSection user={user} totp={st.totp} />
     {msg && <div className="ok-msg small">{msg}</div>}
     {err && <div className="error small">{err}</div>}
@@ -3228,14 +3501,74 @@ function PrivacySection() {
 }
 
 // Thiết bị đang đăng nhập: xem, đăng xuất từng máy hoặc mọi máy khác.
-function DevicesSection() {
+// Duyệt đăng nhập máy mới: quét/dán mã -> xem thiết bị + IP đang xin -> cho phép (gửi khóa danh tính niêm phong cho máy đó).
+const QR_LOGIN_RE = /^reachat-login:([A-Za-z0-9_-]{16,64})\.([A-Za-z0-9+/]{43}=)$/;
+function QrApproveModal({ me, onClose }) {
+  const [code, setCode] = useState(''), [req, setReq] = useState(null), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [done, setDone] = useState(false);
+  const [cam, setCam] = useState(false);
+  const check = async (text) => {
+    setErr(''); const m = String(text || '').trim().match(QR_LOGIN_RE);
+    if (!m) { setErr('Không phải mã đăng nhập ReaChat'); return; }
+    setCam(false); setBusy(true);
+    try {
+      const i = await api.qrLoginInfo(m[1]);
+      if (i.epk !== m[2]) throw new Error('Mã không khớp với máy chủ — không an toàn, hãy tạo mã mới');
+      setReq({ sid: m[1], epk: m[2], ...i });
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  const allow = async () => {
+    setBusy(true); setErr('');
+    try { await api.qrLoginApprove(req.sid, crypto.sealKeyBundleFor(me, req.epk)); setDone(true); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  return (<div className="modal-backdrop" onClick={onClose}>
+    <div className="modal qr-approve" onClick={(e) => e.stopPropagation()}>
+      <h3>📷 Đăng nhập máy khác bằng QR</h3>
+      {done ? <p className="ok-msg">✓ Đã cho phép — máy kia sẽ vào tài khoản trong giây lát.</p> : !req ? (<>
+        <p className="muted small">Trên máy mới chọn <b>Đăng nhập bằng mã QR</b>, rồi quét mã bằng camera hoặc dán mã vào đây.</p>
+        {cam ? <QrScanner onResult={check} onError={(e) => { setCam(false); setErr(e); }} />
+          : <button type="button" className="ghost" onClick={() => setCam(true)}>📷 Mở camera quét mã</button>}
+        <form className="row-inline" onSubmit={(e) => { e.preventDefault(); check(code); }}>
+          <input className="grow" placeholder="reachat-login:…" value={code} onChange={(e) => setCode(e.target.value)} />
+          <button className="primary" disabled={busy || !code.trim()}>Kiểm tra</button>
+        </form>
+      </>) : (<>
+        <div className="notice">Thiết bị <b data-user-content>{req.device || 'không rõ'}</b> · IP <b data-user-content>{req.ip || '?'}</b> đang xin đăng nhập
+          <b> @{me}</b> và nhận khóa mã hóa để đọc tin nhắn của bạn.</div>
+        <p className="error small">Chỉ cho phép nếu đó là máy của chính bạn, bạn vừa tự mở mã QR trên đó. Không ai từ ReaChat yêu cầu bạn quét mã.</p>
+        <div className="modal-actions"><button type="button" className="ghost" onClick={onClose}>Từ chối</button>
+          <button type="button" className="primary" disabled={busy} onClick={allow}>Cho phép đăng nhập</button></div>
+      </>)}
+      {err && <div className="error">{err}</div>}
+      {(done || !req) && <div className="modal-actions"><button type="button" className="ghost" onClick={onClose}>Đóng</button></div>}
+    </div>
+  </div>);
+}
+
+// Quên mã PIN trò chuyện ẩn: chỉ có cách xóa các trò chuyện đó (phía mình) rồi đặt PIN mới — như Zalo.
+function SecretChatsSection() {
+  const [ask, setAsk] = useState(false);
+  return (<section>
+    <h4>Trò chuyện ẩn</h4>
+    <p className="muted small">Ẩn: ⋯ ở một hội thoại → <b>Ẩn trò chuyện</b>. Xem lại: gõ mã PIN vào ô Tìm tin nhắn.</p>
+    {!ask ? <button type="button" className="link small danger-text" onClick={() => setAsk(true)}>Quên mã PIN?</button>
+      : <div className="row-inline"><span className="small">Xóa mọi trò chuyện ẩn trên máy này và bỏ mã PIN?</span>
+        <button type="button" className="ghost mini danger" onClick={() => { window.dispatchEvent(new Event('reachat:secret-reset')); setAsk(false); }}>Xóa & bỏ PIN</button>
+        <button type="button" className="link small" onClick={() => setAsk(false)}>Hủy</button></div>}
+  </section>);
+}
+
+function DevicesSection({ me }) {
   const [d, setD] = useState(null), [err, setErr] = useState(''), [busy, setBusy] = useState(false);
+  const [qrApprove, setQrApprove] = useState(false);
   const load = () => api.listSessions().then(setD).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, []);
   const run = async (fn) => { setBusy(true); setErr(''); try { await fn(); await load(); } catch (e) { setErr(e.message); } finally { setBusy(false); } };
   const fmt = (t) => new Date(t).toLocaleString();
   return (<section>
     <h4>Thiết bị đăng nhập {d && <span className="pill">{d.sessions.length}</span>}</h4>
+    <button type="button" className="ghost mini" onClick={() => setQrApprove(true)}>📷 Đăng nhập máy khác bằng QR</button>
+    {qrApprove && <QrApproveModal me={me} onClose={() => { setQrApprove(false); load(); }} />}
     {!d ? <div className="muted small">{err || 'Đang tải…'}</div> : <ul className="session-list">
       {d.sessions.map((s) => (<li key={s.id}>
         <div><b data-user-content>{s.device || 'Thiết bị không rõ'}</b> {s.id === d.current && <span className="pill ok">Thiết bị này</span>}
@@ -3860,10 +4193,16 @@ function StoryViewer({ view, me, setView, onClose, onDelete, onReply }) {
 const TTL_OPTS = [0, 10, 60, 3600, 86400];
 const ttlLabel = (s) => s === 0 ? '' : s < 60 ? s + 's' : s < 3600 ? (s / 60) + 'm' : s < 86400 ? (s / 3600) + 'h' : (s / 86400) + 'd';
 
-function ChatView({ active, meta, me, messages, online, typingUsers, status, reactions, editing, onCancelEdit, reply, onCancelReply, onSend, onSendFile, onSendSticker, onTyping, onRecall, onEdit, onReply, onReact, onForward, peerUsername, memberOf, pinnedIds, pinnedMsgs, onTogglePin, hiddenHas, onHide, ttl, onChangeTtl, canLoadOlder, onLoadOlder, loadingOlder, onOpenPoll, onSchedule, scheduledCount, onShowScheduled, remindIds, onRemind, onShowGroupInfo, quickReplies, onManageQuick, onPickContact, isStranger, keyInfo, onAckKey, openTasks, onShowTasks, onAssign, unreadAtOpen, onShowSummary, onShowNotes, isPeerBlocked, onToggleBlock, onShowSafety, onCall, groupCall, inGroupCall, onGroupCall, onBack, onSendP2P, onShowGallery, isRequest, onAcceptRequest, onSendLocation, onShowProfile, onStartLive, starredHas, onStar, onThreadSend }) {
+function ChatView({ active, meta, me, messages, online, typingUsers, status, reactions, editing, onCancelEdit, reply, onCancelReply, onSend, onSendFile, onSendSticker, onTyping, onRecall, onEdit, onReply, onReact, onForward, onForwardMany, peerUsername, memberOf, pinnedIds, pinnedMsgs, onTogglePin, hiddenHas, onHide, ttl, onChangeTtl, canLoadOlder, onLoadOlder, loadingOlder, onOpenPoll, onSchedule, scheduledCount, onShowScheduled, remindIds, onRemind, onShowGroupInfo, quickReplies, onManageQuick, onPickContact, isStranger, keyInfo, onAckKey, openTasks, onShowTasks, onAssign, unreadAtOpen, onShowSummary, onShowNotes, isPeerBlocked, onToggleBlock, onShowSafety, onCall, groupCall, inGroupCall, onGroupCall, onBack, onSendP2P, onShowGallery, isRequest, onAcceptRequest, onSendLocation, onShowProfile, onStartLive, starredHas, onStar, onThreadSend }) {
+  const { nickOf } = useContext(AppCtx);
   const [text, setText] = useState('');
   const [gifOpen, setGifOpen] = useState(false), [videoNote, setVideoNote] = useState(false), [liveAsk, setLiveAsk] = useState(false);
   const [thread, setThread] = useState(null);            // tin gốc của luồng đang mở
+  // Chọn nhiều tin: null = tắt; Set id = đang chọn. Đổi hội thoại -> thoát.
+  const [sel, setSel] = useState(null);
+  const [recallAsk, setRecallAsk] = useState(false);
+  useEffect(() => { setSel(null); setRecallAsk(false); }, [active.conversationId]);
+  const toggleSel = (m) => { setRecallAsk(false); setSel((cur) => { const n = new Set(cur || []); n.has(m.id) ? n.delete(m.id) : n.add(m.id); return n; }); };
   const [eventAsk, setEventAsk] = useState(false);
   useEffect(() => { setThread(null); }, [active?.conversationId]);
   const replyCounts = {};
@@ -4015,7 +4354,7 @@ function ChatView({ active, meta, me, messages, online, typingUsers, status, rea
           </div>
         ) : (
           <div>
-            <div className={active.type === 'direct' ? 'clickable' : ''} title={active.type === 'direct' ? 'Xem hồ sơ' : undefined} onClick={() => active.type === 'direct' && onShowProfile?.(peerUsername)}>{active.type === 'group' ? (isChannel ? '📢 ' : meta?.meeting ? '📹 ' : '👥 ') + (meta?.title || 'Nhóm') : '@' + peerUsername}</div>
+            <div className={active.type === 'direct' ? 'clickable' : ''} title={active.type === 'direct' ? 'Xem hồ sơ' : undefined} onClick={() => active.type === 'direct' && onShowProfile?.(peerUsername)}>{active.type === 'group' ? (isChannel ? '📢 ' : meta?.meeting ? '📹 ' : '👥 ') + (meta?.title || 'Nhóm') : (nickOf?.(peerUsername) ? nickOf(peerUsername) + ' (@' + peerUsername + ')' : '@' + peerUsername)}</div>
             <div className="muted small">{isPeerBlocked ? 'Đã chặn' : subtitle}</div>
           </div>
         )}
@@ -4056,7 +4395,7 @@ function ChatView({ active, meta, me, messages, online, typingUsers, status, rea
     {pinnedMsgs.length > 0 && (
       <div className="pinned-bar" title="Tin đã ghim">
         📌 <b>{pinnedMsgs.length} ghim:</b>
-        {pinnedMsgs.map((pm) => <span key={pm.id} className="pinned-item">{msgPreview(pm).slice(0, 44) || '[tin]'}</span>)}
+        {pinnedMsgs.map((pm) => <span key={pm.id} className="pinned-item clickable" title="Đi tới tin" onClick={() => jumpToMsg(pm.id)}>{msgPreview(pm).slice(0, 44) || '[tin]'}</span>)}
       </div>
     )}
     {keyInfo?.changedAt && (
@@ -4089,7 +4428,8 @@ function ChatView({ active, meta, me, messages, online, typingUsers, status, rea
             hasReminder={remindIds.has(m.id)} onRemind={onRemind} onAssign={onAssign}
             onRecall={onRecall} onEdit={onEdit} onReply={onReply} onReact={onReact} onForward={onForward}
             starred={starredHas?.(m.id)} onStar={onStar}
-            threadCount={replyCounts[m.id] || 0} onOpenThread={() => setThread(m)} />);
+            threadCount={replyCounts[m.id] || 0} onOpenThread={() => setThread(m)}
+            selecting={!!sel} selected={!!sel?.has(m.id)} onSelect={toggleSel} />);
         return g.album
           ? <div key={'al-' + g.items[0].id} className={'album-run ' + (g.items[0].senderId === me.id ? 'mine' : 'their') + (g.items.length === 2 ? ' two' : '')}>{g.items.map(bubble)}</div>
           : bubble(g.items[0]);
@@ -4116,6 +4456,24 @@ function ChatView({ active, meta, me, messages, online, typingUsers, status, rea
       <div className="row-inline center">{[[15, '15 phút'], [60, '1 giờ'], [480, '8 giờ']].map(([m, l]) => <button key={m} className="primary" onClick={() => { setLiveAsk(false); onStartLive(m); }}>{l}</button>)}</div>
       <div className="modal-actions"><button className="link" onClick={() => setLiveAsk(false)}>Hủy</button></div>
     </div></div>}
+    {sel && (() => {
+      const picked = messages.filter((m) => sel.has(m.id)).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      const allMine = picked.length > 0 && picked.every((m) => m.senderId === me.id);
+      const copy = () => {
+        const txt = picked.map((m) => `[${fmtTime(m.createdAt)}] ${m.senderUsername || ''}: ${msgPreview(m)}`).join('\n');
+        navigator.clipboard?.writeText(txt); window.dispatchEvent(new CustomEvent('reachat:toast', { detail: `Đã sao chép ${picked.length} tin` }));
+      };
+      return (<div className="select-bar">
+        <b>Đã chọn {picked.length}</b>
+        <button className="ghost mini" disabled={!picked.length} onClick={copy}>📋 Sao chép</button>
+        <button className="ghost mini" disabled={!picked.length} onClick={() => { onForwardMany(picked); setSel(null); }}>↪ Chuyển tiếp</button>
+        <button className="ghost mini" disabled={!picked.length} onClick={() => { picked.forEach((m) => onHide(m.id)); setSel(null); }}>🙈 Xóa phía tôi</button>
+        {allMine && <button className="ghost mini danger" onClick={() => { if (!recallAsk) return setRecallAsk(true); picked.forEach((m) => onRecall(m.id)); setSel(null); }}>
+          {recallAsk ? 'Bấm lần nữa để thu hồi' : '🗑 Thu hồi'}</button>}
+        <span className="grow" />
+        <button className="link" onClick={() => setSel(null)}>Hủy</button>
+      </div>);
+    })()}
     {isChannel && !meta?.left && <div className="bot-banner">📢 Kênh công khai — nội dung <b>không mã hóa đầu-cuối</b> (ai theo dõi cũng đọc được).</div>}
     {meta?.left ? (
       <div className="left-banner">{isChannel ? 'Bạn đã bỏ theo dõi kênh này.' : 'Bạn không còn là thành viên của nhóm này — không gửi được tin mới.'}</div>
@@ -4210,7 +4568,8 @@ function ChatView({ active, meta, me, messages, online, typingUsers, status, rea
               <Icon name="timer" size={14} />{ttlLabel(ttl)}<Icon name="x" size={12} />
             </button>
           )}
-          <input ref={inputRef} placeholder={ttl ? 'Tin sẽ tự hủy…' : 'Nhập tin nhắn…'} value={text} onChange={onText} autoFocus />
+          <input ref={inputRef} placeholder={ttl ? 'Tin sẽ tự hủy…' : 'Nhập tin nhắn…'} value={text} onChange={onText} autoFocus
+            onPaste={(e) => { const fs = [...(e.clipboardData?.files || [])]; if (fs.length && !meta?.left) { e.preventDefault(); sendMany(fs); } }} />
           <button type="button" className={'icon-btn in' + (panel === 'emoji' ? ' active' : '')} title="Emoji"
             onClick={() => setPanel(panel === 'emoji' ? null : 'emoji')}><Icon name="smile" /></button>
         </div>
@@ -4309,10 +4668,13 @@ function ExpireCountdown({ at }) {
   return <span className="expire-badge" title="Tin tự hủy"> · ⏱{left >= 60 ? Math.ceil(left / 60) + 'm' : left + 's'}</span>;
 }
 
-function MessageBubble({ m, mine, senderName, replyTo, reactions, myUsername, pinned, onTogglePin, onHide, hasReminder, onRemind, onAssign, onRecall, onEdit, onReply, onReact, onForward, starred, onStar, threadCount, onOpenThread }) {
+function MessageBubble({ m, mine, senderName, replyTo, reactions, myUsername, pinned, onTogglePin, onHide, hasReminder, onRemind, onAssign, onRecall, onEdit, onReply, onReact, onForward, starred, onStar, threadCount, onOpenThread, selecting, selected, onSelect }) {
   const [pick, setPick] = useState(false);
-  const { report: openReport } = useContext(AppCtx);
+  const { report: openReport, showEdits, nickOf } = useContext(AppCtx);
   const report = (mm, reason) => openReport({ ...mm, __reason: reason });
+  // Hook phải gọi TRƯỚC mọi return sớm: tin chuyển sang "đã thu hồi" mà bớt hook -> React lỗi #300, trắng cả app.
+  const extras = useExtras();
+  const [tr, setTr] = useState(null);                     // null | { ask } | { loading } | { text } | { error }
   if (m.type === 'system') return <div className="sys-msg">{m.body}</div>;   // sự kiện nhóm
   if (m.type === 'call') return <CallLogBubble m={m} />;
   if (m.recalled) return (
@@ -4328,8 +4690,6 @@ function MessageBubble({ m, mine, senderName, replyTo, reactions, myUsername, pi
   const mentioned = m.type === 'text' && new RegExp('@' + myUsername + '\\b', 'i').test(m.body || '');
   // Cảnh báo lừa đảo cho tin của NGƯỜI KHÁC (phân tích bản giải mã ngay trên máy).
   const warns = !mine && m.type === 'text' ? scanScam(m.body) : [];
-  const extras = useExtras();
-  const [tr, setTr] = useState(null);                     // null | { ask } | { loading } | { text } | { error }
   const doTranslate = async () => {
     setTr({ loading: true });
     try { const r = await api.translate(m.body, getLang() === 'en' ? 'en' : 'vi'); setTr({ text: r.same ? null : r.text, same: r.same }); }
@@ -4338,10 +4698,11 @@ function MessageBubble({ m, mine, senderName, replyTo, reactions, myUsername, pi
   const askTranslate = () => { try { if (localStorage.getItem('reachat.translateOk') === '1') return doTranslate(); } catch {} setTr({ ask: true }); };
 
   return (
-    <div className={'bubble ' + (mine ? 'mine' : 'their') + (pinned ? ' pinned' : '') + (mentioned ? ' mentioned' : '')}>
+    <div data-mid={m.id} className={'bubble ' + (mine ? 'mine' : 'their') + (pinned ? ' pinned' : '') + (mentioned ? ' mentioned' : '') + (selecting ? ' selecting' : '') + (selected ? ' selected' : '')}
+      onClickCapture={selecting ? (e) => { e.preventDefault(); e.stopPropagation(); onSelect(m); } : undefined}>
       {pinned && <span className="pin-mark" title="Đã ghim">📌</span>}
-      {senderName && <div className="sender">@{senderName}</div>}
-      {replyTo && <div className="quote">{msgPreview(replyTo).slice(0, 80)}</div>}
+      {senderName && <div className="sender">{nickOf?.(senderName) || '@' + senderName}</div>}
+      {replyTo && <div className="quote clickable" title="Đi tới tin gốc" onClick={() => jumpToMsg(replyTo.id)}>{msgPreview(replyTo).slice(0, 80)}</div>}
       <MessageContent m={m} myUsername={myUsername} />
       {warns.length > 0 && (
         <details className="scam-warn">
@@ -4358,7 +4719,7 @@ function MessageBubble({ m, mine, senderName, replyTo, reactions, myUsername, pi
           : tr.same ? <span className="muted small">🌐 <span>Tin đã ở ngôn ngữ của bạn.</span></span>
           : <><span className="muted small">🌐 <span>Bản dịch</span> · <button className="link small" onClick={() => setTr(null)}>Ẩn</button></span><div data-user-content>{tr.text}</div></>}
       </div>}
-      <time>{fmtTime(m.createdAt)}{m.enc ? ' · 🔒' : ''}{m.editedAt && m.type !== 'location' ? ' · đã sửa' : ''}{m.expireAt ? <ExpireCountdown at={m.expireAt} /> : null}{hasReminder ? <span className="remind-mark" title="Đã đặt nhắc hẹn"> · 🔔</span> : null}{starred ? <span title="Đã đánh dấu sao"> · ⭐</span> : null}</time>
+      <time>{fmtTime(m.createdAt)}{m.enc ? ' · 🔒' : ''}{m.editedAt && m.type !== 'location' ? <> · <span className="edited-link" title="Xem lịch sử sửa" onClick={(e) => { e.stopPropagation(); showEdits?.(m); }}>đã sửa</span></> : ''}{m.expireAt ? <ExpireCountdown at={m.expireAt} /> : null}{hasReminder ? <span className="remind-mark" title="Đã đặt nhắc hẹn"> · 🔔</span> : null}{starred ? <span title="Đã đánh dấu sao"> · ⭐</span> : null}</time>
       {Object.keys(grouped).length > 0 && (
         <div className="reactions">{Object.entries(grouped).map(([e, us]) =>
           <span key={e} className={'react-chip' + (us.includes(myUsername) ? ' mine' : '')} title={us.join(', ')} onClick={() => onReact(m.id, e)}>{e} {us.length}</span>)}</div>
@@ -4366,6 +4727,7 @@ function MessageBubble({ m, mine, senderName, replyTo, reactions, myUsername, pi
       <div className="msg-actions">
         <button title="Thả cảm xúc" onClick={() => setPick(!pick)}><Icon name="smile" size={15} /></button>
         <button title="Trả lời" onClick={() => onReply(m)}><Icon name="reply" size={15} /></button>
+        {onSelect && <button title="Chọn nhiều tin" onClick={() => onSelect(m)}>☑</button>}
         {onOpenThread && <button title="Trả lời trong luồng" onClick={onOpenThread}>💬</button>}
         <button title="Chuyển tiếp" onClick={() => onForward(m)}><Icon name="forward" size={15} /></button>
         {extras.translate && m.type === 'text' && !mine && <button title="Dịch" onClick={askTranslate}>🌐</button>}
@@ -4490,6 +4852,27 @@ function renderWithMentions(text, myUsername) {
     return p;
   });
 }
+// Định dạng chữ kiểu Zalo/Telegram: `code`, **đậm**, _nghiêng_, ~gạch~ (tạo phần tử React, không dùng HTML thô).
+// _ và ~ phải đứng ở ranh giới từ để không phá tên như @nam_1 hay đường dẫn.
+const RICH_RE = /(`[^`\n]+`|\*\*[^*\n]+\*\*|(?<![\p{L}0-9_@/])_[^_\n]+_(?![\p{L}0-9_])|(?<![\p{L}0-9~/])~[^~\n]+~(?![\p{L}0-9~]))/u;
+// Cuộn tới một tin đang hiển thị và nháy sáng; tin chưa tải (quá cũ) -> báo bằng toast.
+function jumpToMsg(id) {
+  const el = document.querySelector(`.messages [data-mid="${CSS.escape(String(id))}"]`);
+  if (!el) { window.dispatchEvent(new CustomEvent('reachat:toast', { detail: 'Tin gốc chưa tải — bấm “Tải tin cũ hơn” rồi thử lại' })); return false; }
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 1800);
+  return true;
+}
+function renderRich(text, myUsername) {
+  return String(text || '').split(RICH_RE).map((p, i) => {
+    if (i % 2 === 0) return <Fragment key={i}>{renderWithMentions(p, myUsername)}</Fragment>;
+    if (p[0] === '`') return <code key={i} className="inline-code">{p.slice(1, -1)}</code>;
+    if (p.startsWith('**')) return <b key={i}>{renderWithMentions(p.slice(2, -2), myUsername)}</b>;
+    if (p[0] === '_') return <i key={i}>{renderWithMentions(p.slice(1, -1), myUsername)}</i>;
+    return <s key={i}>{renderWithMentions(p.slice(1, -1), myUsername)}</s>;
+  });
+}
 
 // Nội dung tin: text / sticker / ảnh / tệp / thoại / bình chọn.
 function MessageContent({ m, myUsername }) {
@@ -4544,7 +4927,7 @@ function MessageContent({ m, myUsername }) {
   }
   const url = m.type === 'text' && !m.recalled && linkPreviewOn() ? firstUrl(m.body) : null;
   return (<>
-    <div className="body">{renderWithMentions(m.body, myUsername)}</div>
+    <div className="body">{renderRich(m.body, myUsername)}</div>
     {url && <LinkPreview url={url} />}
   </>);
 }

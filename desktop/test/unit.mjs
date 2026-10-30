@@ -119,6 +119,19 @@ console.log('8) Đồng bộ giữa thiết bị (gộp tài liệu)');
   ok(g.starred.s1.on === false, 'bỏ sao ở máy 2 (sau) thắng');
   ok(docHash(mergeDocs(may2, may1)) === docHash(g), 'gộp theo thứ tự nào cũng ra cùng kết quả');
   ok(docHash(mergeDocs(g, g)) === docHash(g), 'gộp với chính nó không đổi');
+  // Khóa nhóm: máy 1 xoay khóa (K2, sau), máy 2 vẫn giữ K1 + tự có khóa nhóm khác
+  const k1 = { ...emptyDoc(), groupKeys: { G: { key: 'K2', old: ['K1'], t: 50 }, H: { key: 'H1', old: [], t: 1 } } };
+  const k2 = { ...emptyDoc(), groupKeys: { G: { key: 'K1', old: [], t: 10 }, J: { key: 'J1', old: [], t: 2 } } };
+  const gk = mergeDocs(k1, k2).groupKeys;
+  ok(gk.G.key === 'K2' && gk.G.old.join() === 'K1', 'khóa nhóm: khóa xoay sau làm khóa hiện tại, khóa cũ giữ lại');
+  ok(gk.H && gk.J, 'khóa nhóm: nhóm chỉ một máy có cũng được chép sang');
+  const conflict = mergeDocs({ ...emptyDoc(), groupKeys: { G: { key: 'X', old: [], t: 5 } } }, { ...emptyDoc(), groupKeys: { G: { key: 'Y', old: ['Z'], t: 5 } } }).groupKeys.G;
+  ok([conflict.key, ...conflict.old].sort().join() === 'X,Y,Z', 'khóa nhóm: hai máy tự sinh khóa khác nhau -> không mất khóa nào');
+  ok(docHash(mergeDocs(k2, k1)) === docHash(mergeDocs(k1, k2)), 'khóa nhóm: gộp theo thứ tự nào cũng như nhau');
+  const n = mergeDocs({ ...emptyDoc(), nicknames: { binh: { name: 'Bình béo', t: 5 } }, secretPin: { hash: 'H1', salt: 'S', t: 3 } },
+    { ...emptyDoc(), nicknames: { binh: { name: '', t: 9 }, chi: { name: 'Chị Chi', t: 1 } }, secretPin: { hash: 'H2', salt: 'S', t: 8 } });
+  ok(n.nicknames.binh.name === '' && n.nicknames.chi.name === 'Chị Chi', 'biệt danh: xóa ở máy sau thắng, biệt danh mới được chép');
+  ok(n.secretPin.hash === 'H2', 'mã PIN trò chuyện ẩn: đổi ở máy sau thắng');
 }
 
 console.log(`\n${pass}/${pass + fail} pass`);

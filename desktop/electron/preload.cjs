@@ -15,6 +15,10 @@ contextBridge.exposeInMainWorld('reachat', {
     set: (next) => ipcRenderer.invoke('config:set', next),
     probe: (url) => ipcRenderer.invoke('config:probe', url),
   },
+  autostart: {
+    get: () => ipcRenderer.invoke('autostart:get'),
+    set: (on) => ipcRenderer.invoke('autostart:set', !!on),
+  },
   updates: {
     check: () => ipcRenderer.invoke('update:check'),
     install: () => ipcRenderer.invoke('update:install'),

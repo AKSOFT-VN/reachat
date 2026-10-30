@@ -8,8 +8,20 @@
 //   drafts:    { [convId]: { text, t } },          // text '' = đã xóa nháp (giữ dấu để không bị máy khác "hồi sinh")
 //   hidden:    { [messageId]: t },                 // tin "xóa phía tôi"
 //   starred:   { [messageId]: { on, t, convId, preview, at } },
+//   groupKeys: { [convId]: { key, old: [khóa cũ], by, t } },  // khóa nhóm -> máy khác của mình đọc được tin nhóm
+//   nicknames: { [username]: { name, t } },        // biệt danh đặt cho người khác (name '' = đã xóa)
+//   secretPin: { hash, salt, t },                  // mã PIN trò chuyện ẩn (PBKDF2; hash '' = chưa đặt/đã xóa)
 // }
-export const emptyDoc = () => ({ v: 1, convPrefs: {}, labels: { list: [], t: 0 }, drafts: {}, hidden: {}, starred: {} });
+export const emptyDoc = () => ({ v: 1, convPrefs: {}, labels: { list: [], t: 0 }, drafts: {}, hidden: {}, starred: {}, groupKeys: {}, nicknames: {}, secretPin: { t: 0 } });
+
+// Khóa nhóm: KHÔNG bỏ khóa nào (mất khóa = mất tin). Bản có t lớn hơn quyết định khóa hiện tại,
+// mọi khóa còn lại của cả hai bên vào danh sách khóa cũ (sắp xếp để gộp theo thứ tự nào cũng như nhau).
+export function mergeGroupKey(a, b) {
+  if (!a?.key) return b; if (!b?.key) return a;
+  const cur = (b.t || 0) > (a.t || 0) || ((b.t || 0) === (a.t || 0) && b.key > a.key) ? b : a;
+  const old = [...new Set([a.key, ...(a.old || []), b.key, ...(b.old || [])])].filter((k) => k && k !== cur.key).sort();
+  return { ...cur, old };
+}
 
 const newer = (a, b) => ((b?.t || 0) > (a?.t || 0) ? b : a);
 const mergeMap = (a = {}, b = {}) => {
@@ -22,6 +34,8 @@ export function mergeDocs(a, b) {
   a = { ...emptyDoc(), ...(a || {}) }; b = { ...emptyDoc(), ...(b || {}) };
   const hidden = { ...a.hidden };
   for (const [k, t] of Object.entries(b.hidden || {})) hidden[k] = Math.max(hidden[k] || 0, t || 0);
+  const groupKeys = { ...(a.groupKeys || {}) };
+  for (const [k, g] of Object.entries(b.groupKeys || {})) groupKeys[k] = mergeGroupKey(groupKeys[k], g);
   return {
     v: 1,
     convPrefs: mergeMap(a.convPrefs, b.convPrefs),
@@ -29,6 +43,9 @@ export function mergeDocs(a, b) {
     drafts: mergeMap(a.drafts, b.drafts),
     hidden,
     starred: mergeMap(a.starred, b.starred),
+    groupKeys,
+    nicknames: mergeMap(a.nicknames, b.nicknames),
+    secretPin: newer(a.secretPin, b.secretPin) || { t: 0 },
   };
 }
 

@@ -21,7 +21,7 @@ const env = {
   // Các bộ test gửi dồn hàng trăm tin -> nới giới hạn tốc độ; giới hạn THẬT được kiểm riêng trong test-limits (server riêng).
   RATE_MSG: '100000/1000', RATE_CREATE: '1000/100', RATE_SIGNAL: '100000/1000', RATE_UPLOAD: '1000/100', RATE_FRIEND: '1000/100', RATE_FRAME: '100000/10000',
 };
-const SUITES = ['test-new.mjs', 'test-calls.mjs', 'test-gcall.mjs', 'test-story.mjs', 'test-security.mjs', 'test-invite.mjs', 'test-admin.mjs', 'test-bots.mjs', 'test-channels.mjs', 'test-push.mjs', 'test-limits.mjs', 'test-files.mjs', 'test-account.mjs', 'test-turn.mjs', 'test-captcha.mjs', 'test-search.mjs', 'test-group2.mjs', 'test-gifs.mjs', 'test-hardening.mjs'];
+const SUITES = ['test-new.mjs', 'test-calls.mjs', 'test-gcall.mjs', 'test-story.mjs', 'test-security.mjs', 'test-invite.mjs', 'test-admin.mjs', 'test-bots.mjs', 'test-channels.mjs', 'test-push.mjs', 'test-limits.mjs', 'test-files.mjs', 'test-account.mjs', 'test-turn.mjs', 'test-captcha.mjs', 'test-search.mjs', 'test-group2.mjs', 'test-gifs.mjs', 'test-hardening.mjs', 'test-qrlogin.mjs'];
 
 spawnSync(process.execPath, ['src/seed.js'], { cwd: root, env, stdio: 'ignore' });
 const server = spawn(process.execPath, ['src/index.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });

@@ -60,7 +60,11 @@ export const getCaptcha = () => fetch(serverUrl + '/api/captcha', { cache: 'no-s
 export const googleConfig = () => fetch(serverUrl + '/api/auth/google/config').then((r) => r.json()).catch(() => ({}));
 export const googleBegin = (mode, token) => post('/api/auth/google/begin', { mode }, token);
 export const googlePoll = (body, token) => post('/api/auth/google/poll', { ...body, device: deviceName() }, token);
-export const googleUnlink = (password) => post('/api/me/google/unlink', { password }, authToken);
+export const qrLoginBegin = (epk, secret) => post('/api/qrlogin/begin', { epk, secret, device: deviceName() });
+export const qrLoginPoll = (sid, secret) => post('/api/qrlogin/poll', { sid, secret, device: deviceName() });
+export const qrLoginInfo = (sid) => post('/api/qrlogin/info', { sid }, authToken);
+export const qrLoginApprove = (sid, sealed) => post('/api/qrlogin/approve', { sid, sealed }, authToken);
+export const googleUnlink =(password) => post('/api/me/google/unlink', { password }, authToken);
 export const reportClientError = (b) => fetch(serverUrl + '/api/client-errors', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: 'Bearer ' + authToken } : {}) }, body: JSON.stringify(b) }).catch(() => {});
 export const forgotReset = (b) => post('/api/forgot/reset', { ...b, device: deviceName() });
 export const changePassword = (b) => post('/api/me/password', b, authToken);

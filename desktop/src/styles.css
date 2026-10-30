@@ -288,17 +288,8 @@ body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; 
 .head-actions .link { padding: 4px 7px; border-radius: 7px; }
 .head-actions .link:hover { background: var(--panel2); }
 
-/* Responsive: cửa sổ/web hẹp -> sidebar nhỏ lại, rồi ẩn còn danh sách */
-@media (max-width: 860px) {
-  .chat { grid-template-columns: 240px 1fr; }
-  .story-name { max-width: 48px; }
-}
-@media (max-width: 680px) {
-  .chat { grid-template-columns: 72px 1fr; }
-  .sidebar .me-id > div, .sidebar .status, .new-chat, .toolbar .search, .contacts-toggle span, .conv-main, .preview { display: none; }
-  .conv-list li { padding: 8px 4px; display: grid; place-items: center; }
-  .story-name, .fr-main { display: none; }
-}
+/* Responsive: xem các mốc 1100 / 860 / 760 / 600px ở cuối tệp (bố cục rail | danh sách | hội thoại). */
+@media (max-width: 860px) { .story-name { max-width: 48px; } }
 
 /* Badge nhỏ gọn trên nút */
 .badge-btn { font-size: 13px; }
@@ -1156,8 +1147,13 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
   .chat { grid-template-columns: 68px 250px 1fr; }
   .rail-btn { width: 54px; } .rail-label { display: none; }
 }
-/* ---- Điện thoại: một cột + thanh điều hướng dưới đáy ---- */
+/* Cửa sổ desktop thu nhỏ tối đa (minWidth 760 -> vùng nội dung ~744px): vẫn giữ danh sách + khung chat. */
 @media (max-width: 760px) {
+  .chat { grid-template-columns: 64px 220px 1fr; }
+  .rail-btn { width: 50px; }
+}
+/* ---- Điện thoại: một cột + thanh điều hướng dưới đáy ---- */
+@media (max-width: 600px) {
   .chat { grid-template-columns: 1fr !important; }
   .chat.has-active .sidebar, .chat.has-active .rail { display: none; }
   .chat:not(.has-active) .pane { display: none; }
@@ -1172,7 +1168,10 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
     height: 64px; padding: 4px 6px calc(4px + env(safe-area-inset-bottom)); border-right: 0; border-top: 1px solid var(--line);
     background: color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter: blur(10px); overflow: visible;
   }
-  .rail-logo, .rail-spacer, .rail-btn.small, .rail-me { display: none; }
+  .rail-logo, .rail-spacer, .rail-btn.small { display: none; }
+  /* vẫn vào được Cài đặt / Hồ sơ / Đăng xuất trên màn hẹp */
+  .rail-btn.small[title="Cài đặt"], .rail-btn.small[title="Đăng xuất"] { display: grid; flex: 0 0 40px; }
+  .rail-me { flex: 0 0 40px; align-self: center; }
   .rail-btn { width: auto; flex: 1; border-radius: 14px; padding: 7px 0 5px; }
   .rail-btn.on::before { display: none; }
   .rail-label { display: block; }
@@ -1186,3 +1185,28 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / .14), var(--shadow); }
 /* Màn trống: logo + lời nhắc xếp dọc, sát nhau */
 .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; text-align: center; padding: 20px; }
+
+/* ---- Định dạng chữ, nhảy tới tin ---- */
+.inline-code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: .92em; padding: 1px 5px; border-radius: 5px; background: color-mix(in srgb, currentColor 14%, transparent); }
+.quote.clickable, .pinned-item.clickable { cursor: pointer; }
+.quote.clickable:hover { filter: brightness(1.15); }
+.bubble.flash { animation: msg-flash 1.6s ease-out; }
+@keyframes msg-flash { 0%, 30% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 0 transparent; } }
+/* ---- Chọn nhiều tin, lịch sử sửa ---- */
+.select-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 16px 8px; padding: 8px 12px; border-radius: 14px; background: var(--panel2, var(--panel)); border: 1px solid var(--accent); }
+.select-bar .grow { flex: 1; }
+.bubble.selecting { cursor: pointer; }
+.bubble.selecting .msg-actions { display: none; }
+.bubble.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
+.edited-link { text-decoration: underline dotted; cursor: pointer; }
+.edit-list { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow: auto; }
+.edit-list li, .edit-now { padding: 8px 10px; border-radius: 10px; background: var(--panel2, rgba(127,127,127,.12)); }
+.edit-list li > div, .edit-now > div { white-space: pre-wrap; text-decoration: line-through; opacity: .8; }
+.edit-now > div { text-decoration: none; opacity: 1; }
+/* ---- Cỡ chữ tin nhắn (Cài đặt → Tùy chọn) ---- */
+.bubble .body, .bubble .quote, .composer input:not([type=file]) { font-size: calc(1em * var(--msg-scale, 1)); }
+.font-scale button.on { border-color: var(--accent); color: var(--accent); }
+/* ---- Đăng nhập QR ---- */
+.qr-login { text-align: center; align-items: center; }
+.qr-login .qr-img { width: 240px; height: 240px; border-radius: 12px; background: #fff; padding: 8px; align-self: center; }
+.qr-login-btn { width: 100%; }
