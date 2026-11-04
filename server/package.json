@@ -22,7 +22,7 @@
     "better-sqlite3": "12.11.1",
     "cors": "2.8.5",
     "express": "4.22.3",
-    "jsonwebtoken": "9.0.2",
+    "jsonwebtoken": "9.0.3",
     "nanoid": "5.1.16",
     "node-turn": "^0.0.6",
     "nodemailer": "10.1.5",
